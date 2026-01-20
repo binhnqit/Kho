@@ -1,10 +1,9 @@
 import streamlit as st
 import pandas as pd
 import plotly.express as px
-import io
 
-# --- 1. CẤU HÌNH ---
-st.set_page_config(page_title="STRATEGIC HUB V19.0", layout="wide", page_icon="🚀")
+# --- 1. CONFIG ---
+st.set_page_config(page_title="STRATEGIC HUB V20.0", layout="wide", page_icon="🚀")
 
 URL_LAPTOP_LOI = "https://docs.google.com/spreadsheets/d/e/2PACX-1vS-UP5WFVE63byPckNy_lsT9Rys84A8pPq6cm6rFFBbOnPAsSl1QDLS_A9E45oytg/pub?gid=675485241&single=true&output=csv"
 URL_MIEN_BAC = "https://docs.google.com/spreadsheets/d/e/2PACX-1vS-UP5WFVE63byPckNy_lsT9Rys84A8pPq6cm6rFFBbOnPAsSl1QDLS_A9E45oytg/pub?gid=602348620&single=true&output=csv"
@@ -18,10 +17,10 @@ def load_data(url):
     except: return pd.DataFrame()
 
 def main():
-    # --- 2. SIDEBAR & NẠP DỮ LIỆU ---
+    # --- 2. SIDEBAR & DATA ENGINE ---
     with st.sidebar:
-        st.title("🚀 COMMAND CENTER")
-        if st.button('🔄 REFRESH SYSTEM', type="primary", use_container_width=True):
+        st.title("🚀 STRATEGIC COMMAND")
+        if st.button('🔄 REFRESH DATA', type="primary", use_container_width=True):
             st.cache_data.clear()
             st.rerun()
         
@@ -29,7 +28,7 @@ def main():
         df_bac_raw = load_data(URL_MIEN_BAC)
         df_nam_raw = load_data(URL_DA_NANG)
 
-        # Xử lý Tài chính (Giá trị cốt lõi)
+        # Xử lý Tài chính
         f_list = []
         if not df_loi_raw.empty:
             for _, row in df_loi_raw.iloc[1:].iterrows():
@@ -46,127 +45,92 @@ def main():
         df_f = pd.DataFrame(f_list)
 
         if not df_f.empty:
-            st.divider()
             years = sorted(df_f['NĂM'].unique(), reverse=True)
-            sel_year = st.selectbox("Chọn Năm", years)
+            sel_year = st.selectbox("Năm báo cáo", years)
             months = ["Tất cả"] + sorted(df_f[df_f['NĂM'] == sel_year]['THÁNG'].unique().tolist())
-            sel_month = st.selectbox("Chọn Tháng", months)
-            
-            csv = df_f.to_csv(index=False).encode('utf-8-sig')
-            st.download_button("📥 TẢI BÁO CÁO TÀI CHÍNH", data=csv, file_name=f'Bao_cao_{sel_year}.csv', use_container_width=True)
+            sel_month = st.selectbox("Tháng báo cáo", months)
 
+    # Filter hiển thị
     df_display = df_f[df_f['NĂM'] == sel_year]
     if sel_month != "Tất cả":
         df_display = df_display[df_display['THÁNG'] == sel_month]
 
-    # --- 3. MÀN HÌNH CHÍNH ---
-    st.title(f"🚀 STRATEGIC HUB V19.0 - {sel_year}")
+    st.title(f"🚀 STRATEGIC HUB V20.0")
     
-    m1, m2, m3, m4 = st.columns(4)
-    m1.metric("TỔNG CHI PHÍ", f"{df_display['CP'].sum():,.0f} đ")
-    m2.metric("TỔNG CA HƯ", f"{len(df_display)} ca")
-    m3.metric("TỶ LỆ TRẢ MÁY (KHO)", "Đang đối soát...") # Sẽ cập nhật từ dữ liệu kho
-    m4.metric("LOẠI LỖI CHÍNH", df_display['LINH_KIỆN'].value_counts().idxmax() if not df_display.empty else "N/A")
-
     tabs = st.tabs(["📊 XU HƯỚNG", "💰 TÀI CHÍNH", "🩺 SỨC KHỎE MÁY", "📦 KHO LOGISTICS", "🧠 AI CẢNH BÁO"])
 
-    # --- TAB 1: XU HƯỚNG (PHÂN BỔ CA HƯ) ---
+    # --- TAB 1: XU HƯỚNG ---
     with tabs[0]:
-        c1, c2 = st.columns([1, 1])
-        with c1:
-            fig_pie_ca = px.pie(df_display, names='VÙNG', title="TỶ LỆ PHÂN BỔ CA HƯ THEO VÙNG", hole=0.4)
-            st.plotly_chart(fig_pie_ca, use_container_width=True)
-        with c2:
-            df_device_count = df_display['LINH_KIỆN'].value_counts().reset_index()
-            fig_bar_ca = px.bar(df_device_count, x='count', y='LINH_KIỆN', orientation='h', title="THỐNG KÊ THIẾT BỊ HƯ NHIỀU NHẤT")
-            st.plotly_chart(fig_bar_ca, use_container_width=True)
-        
-        st.write("---")
-        df_trend = df_display.groupby('THÁNG')['CP'].sum().reset_index()
-        st.plotly_chart(px.line(df_trend, x='THÁNG', y='CP', title="DIỄN BIẾN CHI PHÍ THEO THÁNG", markers=True), use_container_width=True)
+        c1, c2 = st.columns(2)
+        c1.plotly_chart(px.pie(df_display, names='VÙNG', title="PHÂN BỔ CA HƯ THEO VÙNG", hole=0.4), use_container_width=True)
+        device_stat = df_display['LINH_KIỆN'].value_counts().reset_index()
+        c2.plotly_chart(px.bar(device_stat, x='count', y='LINH_KIỆN', orientation='h', title="THIẾT BỊ HƯ NHIỀU NHẤT"), use_container_width=True)
 
     # --- TAB 2: TÀI CHÍNH ---
     with tabs[1]:
-        st.plotly_chart(px.bar(df_display.groupby('LINH_KIỆN')['CP'].sum().reset_index().sort_values('CP'), x='CP', y='LINH_KIỆN', orientation='h', title="NGÂN SÁCH THEO LINH KIỆN"), use_container_width=True)
+        st.plotly_chart(px.bar(df_display.groupby('LINH_KIỆN')['CP'].sum().reset_index().sort_values('CP'), x='CP', y='LINH_KIỆN', orientation='h', title="NGÂN SÁCH CHI TIẾT"), use_container_width=True)
 
-    # --- TAB 3: SỨC KHỎE MÁY ---
+    # --- TAB 3: SỨC KHỎE MÁY (TRỌNG TÂM KIỂM TRA) ---
     with tabs[2]:
-        st.subheader("🩺 DANH SÁCH MÁY HƯ NHIỀU LẦN (TOP RỦI RO)")
-        health = df_display.groupby('MÃ_MÁY').agg({'NGÀY': 'count', 'CP': 'sum', 'KHÁCH': 'first'}).reset_index()
-        health.columns = ['Mã Máy', 'Lần hỏng', 'Tổng phí', 'Khách hàng']
-        st.dataframe(health[health['Lần hỏng'] >= 2].sort_values('Lần hỏng', ascending=False), use_container_width=True)
+        st.subheader("📋 PHÂN TÍCH THIẾT BỊ LỖI LẶP LẠI (TẦN SUẤT > 2 LẦN)")
+        # Gom nhóm theo mã máy
+        health_report = df_f.groupby('MÃ_MÁY').agg({
+            'NGÀY': 'count', 
+            'CP': 'sum', 
+            'KHÁCH': 'first',
+            'LINH_KIỆN': lambda x: ', '.join(set(x))
+        }).reset_index()
+        health_report.columns = ['Mã Máy', 'Tổng số lần hỏng', 'Tổng chi phí tích lũy', 'Chủ sở hữu', 'Lịch sử linh kiện']
+        
+        # Lọc những máy lỗi trên 2 lần
+        danger_zone = health_report[health_report['Tổng số lần hỏng'] > 2].sort_values('Tổng số lần hỏng', ascending=False)
+        
+        if not danger_zone.empty:
+            st.error(f"⚠️ Phát hiện {len(danger_zone)} thiết bị có dấu hiệu hư hỏng hệ thống (Lỗi > 2 lần)")
+            
+            # Highlight bảng dữ liệu
+            st.dataframe(danger_zone.style.format({"Tổng chi phí tích lũy": "{:,.0f} đ"})
+                         .background_gradient(subset=['Tổng số lần hỏng'], cmap='Reds'), 
+                         use_container_width=True)
+            
+            # Biểu đồ phân tích thiệt hại của nhóm máy này
+            st.plotly_chart(px.scatter(danger_zone, x="Tổng số lần hỏng", y="Tổng chi phí tích lũy", 
+                                       size="Tổng chi phí tích lũy", color="Mã Máy",
+                                       title="SƠ ĐỒ TƯƠNG QUAN: TẦN SUẤT HỎNG & CHI PHÍ"), use_container_width=True)
+        else:
+            st.success("✅ Chưa phát hiện thiết bị nào hỏng trên 2 lần trong dữ liệu hiện tại.")
 
-    # --- TAB 4: KHO LOGISTICS (LOGIC CHUẨN) ---
+    # --- TAB 4: KHO LOGISTICS ---
     with tabs[3]:
-        st.subheader("📦 ĐỐI SOÁT KHO & TRẠNG THÁI SỬA CHỮA")
         wh_data = []
-        # Logic: Cột G (index 6), I (index 8), J (index 9), L (index 11), N (index 13)
-        for region, raw in [("BẮC", df_bac_raw), ("ĐÀ NẴNG", df_nam_raw)]:
+        for reg, raw in [("BẮC", df_bac_raw), ("NAM", df_nam_raw)]:
             if not raw.empty:
                 for _, r in raw.iloc[1:].iterrows():
                     m_id = str(r.iloc[1]).strip()
                     if not m_id or "MÃ" in m_id.upper(): continue
-                    
-                    # Lấy giá trị các cột theo chỉ dẫn của sếp
-                    st_noi_bo = (str(r.iloc[6]) + str(r.iloc[8])).upper()
-                    st_ngoai = (str(r.iloc[9]) + str(r.iloc[11])).upper()
+                    st_nb = (str(r.iloc[6]) + str(r.iloc[8])).upper()
+                    st_ng = (str(r.iloc[9]) + str(r.iloc[11])).upper()
                     st_giao = str(r.iloc[13]).upper()
                     
-                    if "R" in st_giao:
-                        trang_thai = "🟢 ĐÃ TRẢ CHI NHÁNH"
-                    elif "OK" in st_noi_bo and "R" not in st_giao:
-                        trang_thai = "🔵 ĐANG NẰM KHO NHẬN"
-                    elif any(x in st_ngoai for x in ["OK", "ĐANG", "SỬA"]):
-                        trang_thai = "🟡 ĐANG SỬA NGOÀI"
-                    else:
-                        trang_thai = "⚪ CHỜ KIỂM TRA"
-                        
-                    wh_data.append({"VÙNG": region, "MÃ_MÁY": m_id, "TRẠNG_THÁI": trang_thai})
+                    if "R" in st_giao: tt = "🟢 ĐÃ TRẢ CHI NHÁNH"
+                    elif "OK" in st_nb: tt = "🔵 ĐANG NẰM KHO NHẬN"
+                    elif any(x in st_ng for x in ["OK", "ĐANG", "SỬA"]): tt = "🟡 ĐANG SỬA NGOÀI"
+                    else: tt = "⚪ CHỜ KIỂM TRA"
+                    wh_data.append({"VÙNG": reg, "MÃ_MÁY": m_id, "TRẠNG_THÁI": tt})
         
         if wh_data:
             df_wh = pd.DataFrame(wh_data)
-            
-            # Thống kê tổng quan
-            k1, k2, k3, k4 = st.columns(4)
-            k1.metric("KHO NHẬN TỒN", len(df_wh[df_wh['TRẠNG_THÁI']=="🔵 ĐANG NẰM KHO NHẬN"]))
-            k2.metric("ĐANG SỬA NGOÀI", len(df_wh[df_wh['TRẠNG_THÁI']=="🟡 ĐANG SỬA NGOÀI"]))
-            k3.metric("ĐÃ GIAO TRẢ", len(df_wh[df_wh['TRẠNG_THÁI']=="🟢 ĐÃ TRẢ CHI NHÁNH"]))
-            k4.metric("TỔNG MÁY LƯU KHO", len(df_wh))
+            col_k1, col_k2 = st.columns([2, 1])
+            col_k1.plotly_chart(px.histogram(df_wh, x="VÙNG", color="TRẠNG_THÁI", barmode="group", title="THỐNG KÊ KHO"), use_container_width=True)
+            col_k2.table(df_wh.groupby(['VÙNG', 'TRẠNG_THÁI']).size().unstack(fill_value=0))
 
-            st.write("---")
-            c_wh1, c_wh2 = st.columns([2, 1])
-            c_wh1.plotly_chart(px.histogram(df_wh, x="VÙNG", color="TRẠNG_THÁI", barmode="group", title="SO SÁNH KHO THEO VÙNG"), use_container_width=True)
-            c_wh2.table(df_wh.groupby(['VÙNG', 'TRẠNG_THÁI']).size().unstack(fill_value=0))
-        else:
-            st.info("Chưa có dữ liệu kho...")
-
-    # --- TAB 5: AI CẢNH BÁO (CHIẾN LƯỢC) ---
+    # --- TAB 5: AI CẢNH BÁO ---
     with tabs[4]:
-        st.subheader("🧠 TRỢ LÝ AI: DỰ ĐOÁN CHIẾN LƯỢC")
-        
-        # Tính toán dữ liệu cho AI
-        total_machines = len(health)
-        repeat_fail_rate = (len(health[health['Lần hỏng'] >= 2]) / total_machines * 100) if total_machines > 0 else 0
-        avg_monthly_cost = df_trend['CP'].mean() if not df_trend.empty else 0
-        
-        col_ai1, col_ai2 = st.columns(2)
-        with col_ai1:
-            st.markdown(f"""
-            ### 📊 Phân tích hiệu suất:
-            * **Tỷ lệ thiết bị lỗi lặp lại:** {repeat_fail_rate:.1f}%
-            * **Dự báo ngân sách tháng tới:** {avg_monthly_cost * 1.1:,.0f} đ (Dự phòng rủi ro 10%)
-            * **Vùng rủi ro cao nhất:** {df_display['VÙNG'].value_counts().idxmax()}
-            """)
-        
-        with col_ai2:
-            st.markdown("### 💡 Khuyến nghị chiến lược:")
-            if repeat_fail_rate > 15:
-                st.error("🚨 **CẢNH BÁO:** Tỷ lệ lỗi lặp lại quá cao. Sếp cần xem lại chất lượng linh kiện đầu vào hoặc tay nghề thợ sửa ngoài.")
-            else:
-                st.success("✅ **ỔN ĐỊNH:** Chất lượng sửa chữa đang được duy trì tốt.")
-            
-            if len(df_wh[df_wh['TRẠNG_THÁI']=="🔵 ĐANG NẰM KHO NHẬN"]) > 50:
-                st.warning("⚠️ **TỒN KHO:** Máy sửa xong đang ứ đọng tại kho nhận. Cần đẩy nhanh khâu giao trả (cột N) để giải phóng kho.")
+        st.subheader("🧠 DỰ ĐOÁN CHIẾN LƯỢC AI")
+        if not danger_zone.empty:
+            total_loss = danger_zone['Tổng chi phí tích lũy'].sum()
+            st.warning(f"AI nhận định: Sếp đã chi {total_loss:,.0f} đ cho nhóm máy hỏng lặp lại. Đề xuất thanh lý nhóm này để giảm 20% gánh nặng bảo trì tháng tới.")
+        st.info("💡 Dự báo: Dựa trên trend, linh kiện lỗi cao nhất tháng tới vẫn sẽ là " + (df_display['LINH_KIỆN'].value_counts().idxmax() if not df_display.empty else "N/A"))
 
 if __name__ == "__main__":
     main()
