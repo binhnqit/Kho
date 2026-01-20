@@ -2,14 +2,19 @@ import streamlit as st
 import pandas as pd
 import plotly.express as px
 
-# --- 1. CAU HINH ---
-st.set_page_config(page_title="He Thong Kho V2.3", layout="wide")
+# --- 1. CẤU HÌNH HỆ THỐNG ---
+st.set_page_config(page_title="Hệ Thống Kho Real-time V2.5", layout="wide")
 
-@st.cache_data(ttl=2)
-def load_data_final():
+# Hàm xóa cache để ép cập nhật dữ liệu
+def refresh_data():
+    st.cache_data.clear()
+    st.toast("🔄 Đang tải dữ liệu mới nhất từ Google Sheets...", icon="✅")
+
+@st.cache_data(ttl=600) # Lưu cache lâu hơn để chạy nhanh, nhưng sẽ bị xóa khi nhấn nút Refresh
+def load_data_pro():
     sources = {
-        "MIEN BAC": "https://docs.google.com/spreadsheets/d/e/2PACX-1vS-UP5WFVE63byPckNy_lsT9Rys84A8pPq6cm6rFFBbOnPAsSl1QDLS_A9E45oytg/pub?gid=602348620&single=true&output=csv",
-        "DA NANG": "https://docs.google.com/spreadsheets/d/e/2PACX-1vS-UP5WFVE63byPckNy_lsT9Rys84A8pPq6cm6rFFBbOnPAsSl1QDLS_A9E45oytg/pub?gid=1519063387&single=true&output=csv"
+        "MIỀN BẮC": "https://docs.google.com/spreadsheets/d/e/2PACX-1vS-UP5WFVE63byPckNy_lsT9Rys84A8pPq6cm6rFFBbOnPAsSl1QDLS_A9E45oytg/pub?gid=602348620&single=true&output=csv",
+        "ĐÀ NẴNG": "https://docs.google.com/spreadsheets/d/e/2PACX-1vS-UP5WFVE63byPckNy_lsT9Rys84A8pPq6cm6rFFBbOnPAsSl1QDLS_A9E45oytg/pub?gid=1519063387&single=true&output=csv"
     }
     final_df = pd.DataFrame()
     for region, url in sources.items():
@@ -26,7 +31,6 @@ def load_data_final():
                 sbn = (str(row[9]) + str(row[11])).upper() 
                 gl = str(row[13]).upper().strip()
                 
-                # Logic phan loai ngan gon
                 if gl == "R": stt = "DA_TRA"
                 elif any(x in (kttt + sbn) for x in ["THANH LÝ", "KHÔNG SỬA", "HỎNG"]): stt = "THANH_LY"
                 elif "OK" in (kttt + snb + sbn): stt = "KHO_NHAN"
@@ -42,55 +46,10 @@ def load_data_final():
         except: continue
     return final_df
 
-# --- 2. XU LY ---
-df = load_data_final()
-
-# --- 3. GIAO DIEN ---
-st.title("📊 QUẢN TRỊ KHO & THANH LÝ V2.3")
-
-if not df.empty:
-    # Tinh toan bien truoc de tranh loi ngat dong trong metric
-    t_nhan = len(df)
-    t_tra = len(df[df['STT'] == "DA_TRA"])
-    t_tl = len(df[df['STT'] == "THANH_LY"])
-    t_ton = t_nhan - t_tra
-    
-    # Metrics
-    c1, c2, c3, c4 = st.columns(4)
-    c1.metric("TỔNG NHẬN", t_nhan)
-    c2.metric("ĐÃ TRẢ (R)", t_tra)
-    c3.metric("THANH LÝ", t_tl)
-    c4.metric("TỒN KHO THỰC", t_ton)
-
-    tab1, tab2 = st.tabs(["ĐỐI SOÁT VÙNG", "DANH SÁCH THANH LÝ"])
-
-    with tab1:
-        st.subheader("📍 Thống kê theo vùng")
-        summary = df.groupby('VUNG').agg(
-            Nhan=('MA', 'count'),
-            Tra_R=('STT', lambda x: (x == 'DA_TRA').sum()),
-            Kho_Nhan=('STT', lambda x: (x == 'KHO_NHAN').sum()),
-            Sua_Ngoai=('STT', lambda x: (x == 'SUA_NGOAI').sum()),
-            Thanh_Ly=('STT', lambda x: (x == 'THANH_LY').sum())
-        ).reset_index()
-        st.table(summary)
-        
-        col_l, col_r = st.columns(2)
-        with col_l:
-            st.write("**Máy đang sửa ngoài:**")
-            st.dataframe(df[df['STT'] == "SUA_NGOAI"][['VUNG','MA','SBN']], use_container_width=True)
-        with col_r:
-            st.write("**Máy chờ xuất kho (Chờ R):**")
-            st.dataframe(df[df['STT'] == "KHO_NHAN"][['VUNG','MA','GL']], use_container_width=True)
-
-    with tab2:
-        st.subheader("🔴 Danh sách máy Thanh lý theo vùng")
-        df_tl = df[df['STT'] == "THANH_LY"]
-        if not df_tl.empty:
-            vung_sel = st.multiselect("Chọn vùng:", df_tl['VUNG'].unique(), default=df_tl['VUNG'].unique())
-            st.dataframe(df_tl[df_tl['VUNG'].isin(vung_sel)][['VUNG','MA','LOAI','KTTT','SBN','NGAY']], use_container_width=True)
-            st.plotly_chart(px.bar(df_tl.groupby('VUNG').size().reset_index(name='SL'), x='VUNG', y='SL', color='VUNG'))
-        else:
-            st.info("Chưa có máy thanh lý.")
-else:
-    st.error("Lỗi kết nối dữ liệu.")
+# --- 2. GIAO DIỆN ĐIỀU KHIỂN ---
+col_title, col_ref = st.columns([4, 1])
+with col_title:
+    st.title("🚀 QUẢN TRỊ KHO TỔNG HỢP V2.5")
+with col_ref:
+    # Nút bấm cập nhật dữ liệu tức thì
+    if st.button("🔄 CẬP NHẬT DỮ LIỆU", use_container_width=True
