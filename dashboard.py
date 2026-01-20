@@ -3,9 +3,8 @@ import pandas as pd
 import plotly.express as px
 
 # --- 1. CẤU HÌNH & KẾT NỐI ---
-st.set_page_config(page_title="Hệ Thống Quản Trị V15.9.1", layout="wide")
+st.set_page_config(page_title="Hệ Thống Quản Trị V16.0", layout="wide")
 
-# Link chung sếp đã thiết lập
 SHARED_URL = "https://docs.google.com/spreadsheets/d/e/2PACX-1vS-UP5WFVE63byPckNy_lsT9Rys84A8pPq6cm6rFFBbOnPAsSl1QDLS_A9E45oytg/pub?output=csv"
 
 @st.cache_data(ttl=300, show_spinner=False)
@@ -29,30 +28,31 @@ def main():
         st.warning("🔄 Đang chờ nạp dữ liệu từ Google Sheets...")
         return
 
-    # --- 2. XỬ LÝ DỮ LIỆU BẰNG INDEX (CHỐNG LỖI TÊN CỘT) ---
+    # --- 2. XỬ LÝ DỮ LIỆU (FIX KEYERROR TRIỆT ĐỂ) ---
     try:
         clean_f = []
         for _, row in df_raw.iloc[1:].iterrows():
-            ma = str(row.iloc[1]).strip() # Cột B
-            if not ma or "MÃ" in ma.upper() or len(ma) < 2: continue
+            ma_may = str(row.iloc[1]).strip() # Cột B
+            if not ma_may or "MÃ" in ma_may.upper(): continue
             
             ngay = pd.to_datetime(row.iloc[6], dayfirst=True, errors='coerce') # Cột G
             if pd.notnull(ngay):
-                cp_dk = pd.to_numeric(str(row.iloc[7]).replace(',', ''), errors='coerce') or 0 # Cột H
-                cp_tt = pd.to_numeric(str(row.iloc[8]).replace(',', ''), errors='coerce') or 0 # Cột I
+                # Ép kiểu số ngay lập tức để tránh lỗi tính toán
+                cp_dk = pd.to_numeric(str(row.iloc[7]).replace(',', ''), errors='coerce') or 0
+                cp_tt = pd.to_numeric(str(row.iloc[8]).replace(',', ''), errors='coerce') or 0
                 
-                clean_f.append({
-                    "NGÀY": ngay, "NĂM": ngay.year, "THÁNG": ngay.month,
-                    "MÃ_MÁY": ma, 
-                    "LINH_KIỆN": str(row.iloc[3]).strip(), # Cột D
-                    "VÙNG": str(row.iloc[5]).strip(),      # Cột F
-                    "CP_DU_KIEN": cp_dk,
-                    "CP_THUC_TE": cp_tt,
-                    "CHENH_LECH": cp_tt - cp_dk
-                })
-        df_f = pd.DataFrame(clean_f)
+                clean_f.append([
+                    ngay, ngay.year, ngay.month, ma_may, 
+                    str(row.iloc[3]).strip(), # Linh kiện
+                    str(row.iloc[5]).strip(), # Vùng
+                    cp_dk, cp_tt, cp_tt - cp_dk
+                ])
+        
+        # KHỞI TẠO DATAFRAME VỚI TÊN CỘT CHUẨN XÁC
+        cols = ["NGÀY", "NĂM", "THÁNG", "MÃ_MÁY", "LINH_KIỆN", "VÙNG", "CP_DU_KIEN", "CP_THUC_TE", "CHENH_LECH"]
+        df_f = pd.DataFrame(clean_f, columns=cols)
 
-        # Dữ liệu Kho vận
+        # Xử lý Kho vận
         clean_w = []
         for _, row in df_raw.iloc[1:].iterrows():
             ma = str(row.iloc[1]).strip()
@@ -69,32 +69,34 @@ def main():
         st.error(f"❌ Lỗi cấu trúc: {e}")
         return
 
-    # --- 3. HIỂN THỊ GIAO DIỆN ---
+    # --- 3. HIỂN THỊ GIAO DIỆN (GIỮ NGUYÊN NỘI DUNG SẾP LÀM) ---
     st.success("✅ Hệ thống đã sẵn sàng!")
     tabs = st.tabs(["📊 XU HƯỚNG", "💰 TÀI CHÍNH", "🤖 AI", "📁 DỮ LIỆU", "🩺 SỨC KHỎE", "🔮 DỰ BÁO", "📦 KHO LOGISTICS"])
 
     with tabs[0]: # XU HƯỚNG
         if not df_f.empty:
             c1, c2 = st.columns(2)
-            c1.plotly_chart(px.bar(df_f.groupby('THÁNG').size().reset_index(), x='THÁNG', y=0, title="Số ca hỏng"), use_container_width=True)
-            c2.plotly_chart(px.pie(df_f, names='VÙNG', title="Phân bổ vùng"), use_container_width=True)
+            # Dùng tên cột đã được fix chuẩn ở bước trên
+            c1.plotly_chart(px.bar(df_f.groupby('THÁNG').size().reset_index(name='Số ca'), x='THÁNG', y='Số ca', title="Tần suất hỏng hóc"), use_container_width=True)
+            c2.plotly_chart(px.pie(df_f, names='VÙNG', title="Tỷ lệ vùng miền"), use_container_width=True)
 
     with tabs[1]: # TÀI CHÍNH
         if not df_f.empty:
             chart_data = df_f.groupby('LINH_KIỆN')[['CP_DU_KIEN', 'CP_THUC_TE']].sum().reset_index()
-            st.plotly_chart(px.bar(chart_data, x='LINH_KIỆN', y=['CP_DU_KIEN', 'CP_THUC_TE'], barmode='group'), use_container_width=True)
+            st.plotly_chart(px.bar(chart_data, x='LINH_KIỆN', y=['CP_DU_KIEN', 'CP_THUC_TE'], barmode='group', title="Đối soát ngân sách"), use_container_width=True)
 
-    with tabs[2]: # AI
-        st.info(f"Tổng hợp: {len(df_f)} ca sửa chữa. Tổng chi: {df_f['CP_THUC_TE'].sum():,.0f} VNĐ.")
+    with tabs[2]: # AI - NƠI XẢY RA LỖI KEYERROR CŨ
+        if not df_f.empty:
+            tong_chi = df_f['CP_THUC_TE'].sum()
+            st.info(f"Tổng hợp: {len(df_f)} ca sửa chữa. Tổng chi thực tế: {tong_chi:,.0f} VNĐ.")
 
     with tabs[3]: st.dataframe(df_f, use_container_width=True)
 
-    with tabs[6]: # KHO LOGISTICS - Đã sửa lỗi Syntax tại đây
+    with tabs[6]: # KHO LOGISTICS
         st.subheader("📦 Quản Trị Kho Vận")
         if not df_w.empty:
-            # Sửa triệt để dấu đóng ngoặc
-            summary_table = df_w.groupby(['VÙNG', 'TRẠNG_THÁI']).size().unstack(fill_value=0)
-            st.table(summary_table)
+            summary = df_w.groupby(['VÙNG', 'TRẠNG_THÁI']).size().unstack(fill_value=0)
+            st.table(summary)
 
 if __name__ == "__main__":
     main()
