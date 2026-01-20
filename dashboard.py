@@ -3,7 +3,7 @@ import pandas as pd
 import plotly.express as px
 
 # --- 1. CẤU HÌNH ---
-st.set_page_config(page_title="Hệ Thống Quản Trị V16.4", layout="wide")
+st.set_page_config(page_title="Hệ Thống Quản Trị V16.5", layout="wide")
 
 URL_FINANCE = "https://docs.google.com/spreadsheets/d/e/2PACX-1vS-UP5WFVE63byPckNy_lsT9Rys84A8pPq6cm6rFFBbOnPAsSl1QDLS_A9E45oytg/pub?output=csv"
 URL_KHO_BAC = "https://docs.google.com/spreadsheets/d/e/2PACX-1vS-UP5WFVE63byPckNy_lsT9Rys84A8pPq6cm6rFFBbOnPAsSl1QDLS_A9E45oytg/pub?gid=602348620&single=true&output=csv"
@@ -22,12 +22,12 @@ def main():
         st.cache_data.clear()
         st.rerun()
 
-    # Nạp dữ liệu
+    # Nạp dữ liệu độc lập
     df_f_raw = fetch_data(URL_FINANCE)
     df_kb_raw = fetch_data(URL_KHO_BAC)
     df_kn_raw = fetch_data(URL_KHO_NAM)
 
-    # --- 2. XỬ LÝ DỮ LIỆU TÀI CHÍNH AN TOÀN ---
+    # --- 2. XỬ LÝ DỮ LIỆU TÀI CHÍNH ---
     df_f = pd.DataFrame()
     if not df_f_raw.empty and len(df_f_raw.columns) > 8:
         clean_f = []
@@ -45,35 +45,31 @@ def main():
                 })
         df_f = pd.DataFrame(clean_f)
 
-    # --- 3. XỬ LÝ BỘ LỌC SIDEBAR ---
-    df_f_filtered = df_f.copy()
-    if not df_f.empty and 'VÙNG' in df_f.columns:
-        vung_options = sorted(df_f['VÙNG'].unique())
-        sel_vung = st.sidebar.multiselect("📍 Chọn Vùng Miền", options=vung_options, default=vung_options)
-        df_f_filtered = df_f[df_f['VÙNG'].isin(sel_vung)]
-
-    # --- 4. GIAO DIỆN CHÍNH ---
-    st.title("🛡️ HỆ THỐNG QUẢN TRỊ CHIẾN LƯỢC V16.4")
-    
+    # --- 3. KIỂM TRA DỮ LIỆU ĐẦU VÀO ---
     if df_f.empty:
-        st.warning("⚠️ Đang chờ nạp dữ liệu... Sếp hãy kiểm tra internet hoặc bấm 'LÀM MỚI DỮ LIỆU'.")
+        st.warning("⚠️ Đang chờ nạp dữ liệu... Sếp vui lòng kiểm tra kết nối Sheets.")
         return
 
-    tabs = st.tabs(["📊 XU HƯỚNG", "💰 TÀI CHÍNH", "🧠 AI ANALYTICS", "📁 DỮ LIỆU", "🩺 SỨC KHỎE MÁY", "📦 KHO LOGISTICS"])
+    # --- 4. BỘ LỌC ---
+    vung_options = sorted(df_f['VÙNG'].unique())
+    sel_vung = st.sidebar.multiselect("📍 Vùng Miền", options=vung_options, default=vung_options)
+    df_f_filtered = df_f[df_f['VÙNG'].isin(sel_vung)]
 
-    with tabs[0]: # XU HƯỚNG
+    # --- 5. GIAO DIỆN CHÍNH ---
+    st.title("🛡️ HỆ THỐNG QUẢN TRỊ CHIẾN LƯỢC V16.5")
+    tabs = st.tabs(["📊 XU HƯỚNG", "💰 TÀI CHÍNH", "🧠 AI ANALYTICS", "📁 DỮ LIỆU", "🩺 SỨC KHỎE", "📦 KHO"])
+
+    # TAB 1: XU HƯỚNG
+    with tabs[0]:
         c1, c2 = st.columns([2, 1])
-        with c1:
-            line_data = df_f_filtered.groupby('THÁNG')['CP_THUC_TE'].sum().reset_index()
-            fig1 = px.line(line_data, x='THÁNG', y='CP_THUC_TE', title="Biến động chi phí", markers=True)
-            st.plotly_chart(fig1, use_container_width=True)
-        with c2:
-            fig2 = px.pie(df_f_filtered, names='VÙNG', hole=0.4, title="Tỷ lệ theo vùng")
-            st.plotly_chart(fig2, use_container_width=True)
+        line_data = df_f_filtered.groupby('THÁNG')['CP_THUC_TE'].sum().reset_index()
+        fig_line = px.line(line_data, x='THÁNG', y='CP_THUC_TE', title="Biến động chi phí", markers=True)
+        c1.plotly_chart(fig_line, use_container_width=True)
+        
+        fig_pie = px.pie(df_f_filtered, names='VÙNG', hole=0.4, title="Tỷ lệ sự cố")
+        c2.plotly_chart(fig_pie, use_container_width=True)
 
-    with tabs[1]: # TÀI CHÍNH
+    # TAB 2: TÀI CHÍNH
+    with tabs[1]:
         bar_data = df_f_filtered.groupby('LINH_KIỆN')['CP_THUC_TE'].sum().sort_values(ascending=False).reset_index()
-        fig3 = px.bar(bar_data, x='LINH_KIỆN', y='CP_THUC_TE', color='CP_THUC_TE', title="Chi phí linh kiện")
-        st.plotly_chart(fig3, use_container_width=True)
-
-    with tabs[2]: # AI ANALYT
+        fig_bar = px.bar(bar_data, x='LINH_KIỆN', y='CP_THUC_TE', color='CP_THUC_
