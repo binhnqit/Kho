@@ -2,18 +2,18 @@ import streamlit as st
 import pandas as pd
 import plotly.express as px
 
-# --- 1. CẤU HÌNH ---
-st.set_page_config(page_title="Kho Miền Bắc V1.0.5", layout="wide")
+# --- 1. CAU HINH ---
+st.set_page_config(page_title="Kho Mien Bac V1.0.6", layout="wide")
 
 @st.cache_data(ttl=2)
 def load_data_mien_bac():
     url = "https://docs.google.com/spreadsheets/d/e/2PACX-1vS-UP5WFVE63byPckNy_lsT9Rys84A8pPq6cm6rFFBbOnPAsSl1QDLS_A9E45oytg/pub?gid=602348620&single=true&output=csv"
     try:
-        # Đọc từ dòng 2, ép kiểu string
+        # Doc tu dong 2, ep kieu string
         df = pd.read_csv(url, skiprows=1, dtype=str).fillna("")
         df.columns = [str(c).strip().upper() for c in df.columns]
         
-        # Xử lý trộn dòng bằng ffill
+        # Xu ly tron dong bang ffill
         df = df.replace(r'^\s*$', pd.NA, regex=True)
         if 'MÃ SỐ MÁY' in df.columns:
             df['MÃ SỐ MÁY'] = df['MÃ SỐ MÁY'].ffill()
@@ -24,7 +24,6 @@ def load_data_mien_bac():
             if not ma or ma.upper() in ["NAN", "STT", "MÃ SỐ MÁY", "0"]:
                 continue
             
-            # Xử lý ngày và trạng thái
             d_nhan = pd.to_datetime(row.get('NGÀY NHẬN', ''), dayfirst=True, errors='coerce')
             d_tra = pd.to_datetime(row.get('NGÀY TRẢ', ''), dayfirst=True, errors='coerce')
             
@@ -32,44 +31,45 @@ def load_data_mien_bac():
             hu_hong = str(row.get('HƯ KHÔNG SỬA ĐƯỢC', '')).strip()
             giao_lai = str(row.get('GIAO LẠI MIỀN BẮC', '')).upper()
             
-            # Logic phân loại
-            status = "🟡 TRONG KHO"
-            if "THANH LÝ" in sua_nb or hu_hong != "":
-                status = "🔴 THANH LÝ"
+            # Phan loai trang thai don gian de tranh loi syntax
+            status = "TON KHO"
+            if "THANH LY" in sua_nb or hu_hong != "":
+                status = "THANH LY"
             elif pd.notnull(d_tra) or "OK" in giao_lai or "XONG" in giao_lai:
-                status = "🟢 ĐÃ XONG"
+                status = "DA XONG"
 
             clean_list.append({
-                "MÃ MÁY": ma,
-                "TRẠNG THÁI": status,
-                "NGÀY NHẬN": d_nhan,
-                "LOẠI MÁY": row.get('LOẠI MÁY', ''),
-                "KIỂM TRA": row.get('KIỂM TRA THỰC TẾ', ''),
-                "NỘI BỘ": row.get('SỬA NỘI BỘ', ''),
-                "BÊN NGOÀI": row.get('SỬA BÊN NGOÀI', '')
+                "MA MAY": ma,
+                "TRANG THAI": status,
+                "NGAY NHAN": d_nhan,
+                "LOAI MAY": row.get('LOẠI MÁY', ''),
+                "KIEM TRA": row.get('KIỂM TRA THỰC TẾ', ''),
+                "NOI BO": row.get('SỬA NỘI BỘ', ''),
+                "NGOAI": row.get('SỬA BÊN NGOÀI', '')
             })
         return pd.DataFrame(clean_list)
     except Exception as e:
-        st.error(f"Lỗi: {e}")
+        st.error(f"Loi: {e}")
         return pd.DataFrame()
 
-# --- 3. HIỂN THỊ DASHBOARD ---
-st.title("🏭 KHO MIỀN BẮC - TRUY VẤN DÒNG 2")
+# --- 3. HIEN THI ---
+st.title("HE THONG QUAN LY KHO MIEN BAC")
 
 df_mb = load_data_mien_bac()
 
 if not df_mb.empty:
-    # KPI - Sửa lỗi ngắt dòng ở đây
+    # KPI
     k1, k2, k3 = st.columns(3)
-    k1.metric("Tổng thiết bị", len(df_mb))
-    k2.metric("Đang tồn kho", len(df_mb[df_mb['TRẠNG THÁI'] == "🟡 TRONG KHO"]))
-    k3.metric("Đã hoàn tất", len(df_mb[df_mb['TRẠNG THÁI'] == "🟢 ĐÃ XONG"]))
+    k1.metric("Tong thiet bi", len(df_mb))
+    k2.metric("Dang ton kho", len(df_mb[df_mb['TRANG THAI'] == "TON KHO"]))
+    k3.metric("Da hoan tat", len(df_mb[df_mb['TRANG THAI'] == "DA XONG"]))
 
-    # Bảng dữ liệu
-    st.subheader("📋 Bảng kê chi tiết")
+    # Bang du lieu
+    st.subheader("Danh sach chi tiet")
     st.dataframe(df_mb, use_container_width=True)
     
-    # Biểu đồ
-    st.plotly_chart(px.pie(df_mb, names='TRẠNG THÁI', title="Cơ cấu kho"), use_container_width=True)
+    # Bieu do
+    fig = px.pie(df_mb, names='TRANG THAI', title="Co cau kho")
+    st.plotly_chart(fig, use_container_width=True)
 else:
-    st.info("Chưa
+    st.info("He thong dang cho du lieu tu Sheets...")
