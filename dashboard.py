@@ -3,13 +3,13 @@ import pandas as pd
 import plotly.express as px
 from datetime import datetime
 
-st.set_page_config(page_title="Hệ Thống Quản Trị Kho V2.0", layout="wide")
+st.set_page_config(page_title="Đối Soát Kho Chuyên Sâu V2.1", layout="wide")
 
 @st.cache_data(ttl=2)
-def load_and_process_pro():
+def load_and_audit():
     sources = {
-        "MIEN BAC": "https://docs.google.com/spreadsheets/d/e/2PACX-1vS-UP5WFVE63byPckNy_lsT9Rys84A8pPq6cm6rFFBbOnPAsSl1QDLS_A9E45oytg/pub?gid=602348620&single=true&output=csv",
-        "DA NANG": "https://docs.google.com/spreadsheets/d/e/2PACX-1vS-UP5WFVE63byPckNy_lsT9Rys84A8pPq6cm6rFFBbOnPAsSl1QDLS_A9E45oytg/pub?gid=1519063387&single=true&output=csv"
+        "MIỀN BẮC": "https://docs.google.com/spreadsheets/d/e/2PACX-1vS-UP5WFVE63byPckNy_lsT9Rys84A8pPq6cm6rFFBbOnPAsSl1QDLS_A9E45oytg/pub?gid=602348620&single=true&output=csv",
+        "ĐÀ NẴNG": "https://docs.google.com/spreadsheets/d/e/2PACX-1vS-UP5WFVE63byPckNy_lsT9Rys84A8pPq6cm6rFFBbOnPAsSl1QDLS_A9E45oytg/pub?gid=1519063387&single=true&output=csv"
     }
     final_df = pd.DataFrame()
     now = datetime.now()
@@ -23,80 +23,100 @@ def load_and_process_pro():
                 ma = str(row[1]).strip()
                 if not ma or ma.upper() in ["NAN", "0", "STT"]: continue
                 
-                # 1. Xử lý ngày nhận & Tính ngày tồn kho
-                d_nhan = pd.to_datetime(row[5], dayfirst=True, errors='coerce')
-                so_ngay_ton = (now - d_nhan).days if pd.notnull(d_nhan) else 0
+                # 1. Dữ liệu gốc
+                kttt = str(row[6]).upper()  # Cột G: Kiểm tra TT
+                snb = (str(row[7]) + str(row[8])).upper() # Cột H, I: Nội bộ
+                sbn = (str(row[9]) + str(row[11])).upper() # Cột J, L: Bên ngoài
+                gl = str(row[13]).upper().strip() # Cột N: Giao lại
 
-                # 2. Lấy dữ liệu các cột kỹ thuật
-                kttt = str(row[6]).upper()
-                snb = (str(row[7]) + str(row[8])).upper()
-                sbn = (str(row[9]) + str(row[11])).upper()
-                gl = str(row[13]).upper().strip()
-
-                is_ok = any(x in kttt for x in ["OK"]) or any(x in snb for x in ["OK"]) or any(x in sbn for x in ["OK"])
+                # 2. Phân loại chi tiết để thống kê
                 is_r = (gl == "R")
+                is_ok_ngoai = "OK" in sbn
+                is_ok_tong = "OK" in kttt or "OK" in snb or is_ok_ngoai
+                is_thanh_ly = any(x in kttt or x in sbn for x in ["THANH LÝ", "KHÔNG SỬA", "HỎNG"])
 
-                # 3. Phân loại trạng thái chuyên sâu
                 if is_r:
-                    stt = "🟢 ĐÃ TRẢ ĐI (R)"
-                elif is_ok and not is_r:
-                    stt = "🔵 KHO NHẬN (CHỜ R)"
-                elif any(x in kttt for x in ["THANH LÝ", "KHÔNG SỬA"]) or any(x in sbn for x in ["THANH LÝ", "KHÔNG SỬA"]):
+                    stt = "🟢 ĐÃ TRẢ (R)"
+                elif is_ok_tong and not is_r:
+                    stt = "🔵 KHO NHẬN (ĐỢI R)"
+                elif not is_ok_tong and "OK" not in sbn and sbn != "" and not is_thanh_ly:
+                    stt = "🟠 ĐANG SỬA NGOÀI"
+                elif is_thanh_ly:
                     stt = "🔴 THANH LÝ"
                 else:
-                    stt = "🟡 ĐANG XỬ LÝ"
+                    stt = "🟡 ĐANG KIỂM TRA/NB"
 
                 data_clean.append({
-                    "MIỀN": region,
+                    "VÙNG": region,
                     "MÃ MÁY": ma,
-                    "LOẠI MÁY": row[3],
                     "TRẠNG THÁI": stt,
-                    "NGÀY NHẬN": d_nhan,
-                    "SỐ NGÀY TỒN": so_ngay_ton,
-                    "GHI CHÚ": row[6] if row[6] else sbn,
-                    "XÁC NHẬN": gl
+                    "SỬA NGOÀI": sbn,
+                    "GIAO LẠI": gl,
+                    "NGÀY NHẬN": pd.to_datetime(row[5], dayfirst=True, errors='coerce'),
+                    "LOẠI MÁY": row[3]
                 })
             final_df = pd.concat([final_df, pd.DataFrame(data_clean)], ignore_index=True)
         except: continue
     return final_df
 
-# --- GIAO DIỆN CHUYÊN GIA ---
-st.title("🛡️ QUẢN TRỊ KHO V2.0 - CHỐNG THẤT THOÁT")
-df = load_and_process_pro()
+df = load_audit()
+
+# --- GIAO DIỆN THỐNG KÊ ---
+st.title("🚀 TRUNG TÂM ĐIỀU HÀNH & ĐỐI SOÁT TỔNG HỢP")
 
 if not df.empty:
-    # KPI CHUYÊN SÂU
-    t_nhan = len(df)
-    t_ton_kho = len(df[df['TRẠNG THÁI'] != "🟢 ĐÃ TRẢ ĐI (R)"])
-    t_ngam_lau = len(df[(df['TRẠNG THÁI'] == "🔵 KHO NHẬN (CHỜ R)") & (df['SỐ NGÀY TỒN'] > 3)])
-    
-    m1, m2, m3, m4 = st.columns(4)
-    m1.metric("Tổng Nhận Toàn Hệ Thống", t_nhan)
-    m2.metric("Thực Tồn Tại Kho (Chưa R)", t_ton_kho)
-    m3.metric("Cảnh Báo Ngâm Máy (>3 ngày)", t_ngam_lau, delta="Cần xử lý ngay", delta_color="inverse")
-    m4.metric("Vòng Quay Kho (Avg Days)", round(df[df['TRẠNG THÁI'] != "🟢 ĐÃ TRẢ ĐI (R)"]['SỐ NGÀY TỒN'].mean(), 1))
+    # 1. THỐNG KÊ THEO VÙNG (Yêu cầu 1)
+    st.subheader("📍 1. Thống kê theo vùng Miền")
+    summary = df.groupby('VÙNG').agg(
+        Tong_Nhan=('MÃ MÁY', 'count'),
+        Dang_Sua_Ngoai=('TRẠNG THÁI', lambda x: (x == '🟠 ĐANG SỬA NGOÀI').sum()),
+        Kho_Nhan_Doi_R=('TRẠNG THÁI', lambda x: (x == '🔵 KHO NHẬN (ĐỢI R)').sum()),
+        Da_Tra_Xong=('TRẠNG THÁI', lambda x: (x == '🟢 ĐÃ TRẢ (R)').sum()),
+        Thanh_Ly=('TRẠNG THÁI', lambda x: (x == '🔴 THANH LÝ').sum())
+    ).reset_index()
+    summary['Thực_Tồn_Tại_Kho'] = summary['Tong_Nhan'] - summary['Da_Tra_Xong']
+    st.table(summary)
 
-    # DANH SÁCH CẢNH BÁO ĐỎ
-    if t_ngam_lau > 0:
-        st.error(f"🚨 PHÁT HIỆN {t_ngam_lau} THIẾT BỊ ĐÃ XỬ LÝ XONG NHƯNG CHƯA XUẤT KHO TRÊN 3 NGÀY")
-        st.dataframe(df[(df['TRẠNG THÁI'] == "🔵 KHO NHẬN (CHỜ R)") & (df['SỐ NGÀY TỒN'] > 3)].sort_values('SỐ NGÀY TỒN', ascending=False), use_container_width=True)
-
+    # 2. PHÂN TÍCH ĐANG SỬA NGOÀI (Yêu cầu 2)
     st.write("---")
-    
-    # BIỂU ĐỒ PHÂN TÍCH LỨA TUỔI HÀNG TỒN (AGING)
-    col1, col2 = st.columns(2)
-    with col1:
-        fig_pie = px.pie(df, names='TRẠNG THÁI', title="Cơ cấu tồn kho thực tế", hole=0.4,
-                         color_discrete_map={"🟢 ĐÃ TRẢ ĐI (R)":"#2ecc71","🔵 KHO NHẬN (CHỜ R)":"#3498db","🔴 THANH LÝ":"#e74c3c","🟡 ĐANG XỬ LÝ":"#f1c40f"})
-        st.plotly_chart(fig_pie, use_container_width=True)
-    with col2:
-        df_aging = df[df['TRẠNG THÁI'] != "🟢 ĐÃ TRẢ ĐI (R)"]
-        fig_hist = px.histogram(df_aging, x="SỐ NGÀY TỒN", color="MIỀN", title="Phân bổ thời gian máy nằm tại xưởng",
-                               labels={"SỐ NGÀY TỒN": "Số ngày nằm kho"}, barmode="group")
-        st.plotly_chart(fig_hist, use_container_width=True)
+    col_a, col_b = st.columns(2)
+    with col_a:
+        st.subheader("🛠️ 2. Máy đang sửa ngoài")
+        df_ngoai = df[df['TRẠNG THÁI'] == '🟠 ĐANG SỬA NGOÀI']
+        st.metric("Tổng máy đang ở tiệm ngoài", len(df_ngoai))
+        if not df_ngoai.empty:
+            st.dataframe(df_ngoai[['VÙNG', 'MÃ MÁY', 'SỬA NGOÀI', 'NGÀY NHẬN']], use_container_width=True)
 
-    # BẢNG TRA CỨU TỔNG HỢP
-    st.subheader("🔍 Tra cứu dữ liệu toàn hệ thống")
-    st.dataframe(df.sort_values(['SỐ NGÀY TỒN', 'TRẠNG THÁI'], ascending=[False, True]), use_container_width=True)
+    # 3. MÁY NẰM Ở KHO NHẬN (Yêu cầu 3)
+    with col_b:
+        st.subheader("📦 3. Đang nằm ở Kho nhận (Chờ R)")
+        df_kho = df[df['TRẠNG THÁI'] == '🔵 KHO NHẬN (ĐỢI R)']
+        st.metric("Máy sửa xong chưa xuất kho", len(df_kho), delta_color="inverse")
+        if not df_kho.empty:
+            st.dataframe(df_kho[['VÙNG', 'MÃ MÁY', 'GIAO LẠI', 'LOẠI MÁY']], use_container_width=True)
+
+    # 4. ĐỐI CHIẾU NHẬN VÀO - GIAO RA (Yêu cầu 4)
+    st.write("---")
+    st.subheader("⚖️ 4. Đối chiếu Nhận vào - Giao ra (Logistics Balance)")
+    
+    total_in = len(df)
+    total_out = len(df[df['TRẠNG THÁI'] == '🟢 ĐÃ TRẢ (R)'])
+    total_loss = len(df[df['TRẠNG THÁI'] == '🔴 THANH LÝ'])
+    current_stock = total_in - total_out - total_loss
+
+    c1, c2, c3, c4 = st.columns(4)
+    c1.metric("TỔNG NHẬN VÀO", total_in)
+    c2.metric("TỔNG GIAO RA (R)", total_out, delta="Đã xuất kho")
+    c3.metric("KHẤU HAO (THANH LÝ)", total_loss)
+    c4.metric("TỒN KHO THỰC TẾ", current_stock, delta="Máy đang tại xưởng", delta_color="off")
+
+    # Biểu đồ dòng chảy thiết bị
+    fig_flow = px.funnel_area(
+        names=["Nhận vào", "Tồn tại xưởng", "Đã trả (R)", "Thanh lý"],
+        values=[total_in, current_stock, total_out, total_loss],
+        title="Biểu đồ dòng chảy thiết bị (Input -> Output)"
+    )
+    st.plotly_chart(fig_flow, use_container_width=True)
+
 else:
-    st.error("Hệ thống đang kiểm tra lại luồng dữ liệu...")
+    st.warning("Đang kết nối dữ liệu từ Google Sheets...")
