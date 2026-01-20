@@ -3,7 +3,7 @@ import pandas as pd
 import plotly.express as px
 
 # --- 1. CONFIG ---
-st.set_page_config(page_title="STRATEGIC HUB V21.0", layout="wide", page_icon="🚀")
+st.set_page_config(page_title="LAPTOP MPM 4ORANGES", layout="wide", page_icon="🚀")
 
 URL_LAPTOP_LOI = "https://docs.google.com/spreadsheets/d/e/2PACX-1vS-UP5WFVE63byPckNy_lsT9Rys84A8pPq6cm6rFFBbOnPAsSl1QDLS_A9E45oytg/pub?gid=675485241&single=true&output=csv"
 URL_MIEN_BAC = "https://docs.google.com/spreadsheets/d/e/2PACX-1vS-UP5WFVE63byPckNy_lsT9Rys84A8pPq6cm6rFFBbOnPAsSl1QDLS_A9E45oytg/pub?gid=602348620&single=true&output=csv"
@@ -19,7 +19,7 @@ def load_data(url):
 def main():
     # --- 2. SIDEBAR & DATA ENGINE ---
     with st.sidebar:
-        st.title("🚀 STRATEGIC HUB")
+        st.title("🚀 LAPTOP MPM 4ORANGES")
         if st.button('🔄 LÀM MỚI HỆ THỐNG', type="primary", use_container_width=True):
             st.cache_data.clear()
             st.rerun()
@@ -53,7 +53,7 @@ def main():
     if sel_month != "Tất cả":
         df_display = df_display[df_display['THÁNG'] == sel_month]
 
-    st.title("🛡️ HỆ THỐNG ĐIỀU HÀNH CHIẾN LƯỢC V21.0")
+    st.title("🛡️ QUẢN LÝ LAPTOP MÁY PHA MÀU 4ORANGES")
     tabs = st.tabs(["📊 XU HƯỚNG", "💰 TÀI CHÍNH", "🩺 SỨC KHỎE MÁY", "📦 KHO LOGISTICS", "🧠 AI ĐỀ XUẤT"])
 
     # --- TAB 1: XU HƯỚNG (BỔ SUNG TỔNG MÁY HƯ) ---
