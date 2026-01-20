@@ -3,82 +3,83 @@ import pandas as pd
 import plotly.express as px
 
 # --- 1. CẤU HÌNH ---
-st.set_page_config(page_title="Kho Miền Bắc V1.0.1", layout="wide")
+st.set_page_config(page_title="Kho Miền Bắc V1.0.2", layout="wide")
 
-# --- 2. MODULE ĐỌC DỮ LIỆU THÔNG MINH (CHỈ MIỀN BẮC) ---
+# --- 2. MODULE ĐỌC DỮ LIỆU MIỀN BẮC ---
 @st.cache_data(ttl=2)
 def load_data_mien_bac():
-    # Link CSV Miền Bắc của sếp
+    # Link CSV Miền Bắc sếp đã xuất bản
     url = "https://docs.google.com/spreadsheets/d/e/2PACX-1vS-UP5WFVE63byPckNy_lsT9Rys84A8pPq6cm6rFFBbOnPAsSl1QDLS_A9E45oytg/pub?gid=602348620&single=true&output=csv"
     
     try:
-        # Đọc thô dữ liệu
-        df = pd.read_csv(url)
+        # Đọc dữ liệu thô, ép kiểu string để không mất số 0 đầu mã máy
+        df = pd.read_csv(url, dtype=str).fillna("")
         
-        # Xóa các dòng hoàn toàn trống
-        df = df.dropna(how='all')
-        
-        # CHUẨN HÓA TÊN CỘT: Viết hoa, xóa khoảng trắng thừa đầu cuối
+        # CHUẨN HÓA TIÊU ĐỀ: Xóa khoảng trắng thừa và viết hoa
         df.columns = [str(c).strip().upper() for c in df.columns]
         
-        # TẠO DANH SÁCH KẾT QUẢ
         data_clean = []
-        
         for _, row in df.iterrows():
-            # 1. Tìm Mã Máy (Cột nào có chữ "MÃ SỐ MÁY")
+            # Kiểm tra Mã Số Máy (Cột quan trọng nhất)
             ma = str(row.get('MÃ SỐ MÁY', '')).strip()
-            if not ma or ma.upper() == "NAN" or len(ma) < 2: continue
+            if not ma or ma.upper() in ["NAN", "", "STT"]: continue
             
-            # 2. Tìm Ngày Nhận
-            ngay_nhan = pd.to_datetime(row.get('NGÀY NHẬN', ''), dayfirst=True, errors='coerce')
-            ngay_tra = pd.to_datetime(row.get('NGÀY TRẢ', ''), dayfirst=True, errors='coerce')
+            # Xử lý ngày tháng theo đúng định dạng Việt Nam
+            d_nhan = pd.to_datetime(row.get('NGÀY NHẬN', ''), dayfirst=True, errors='coerce')
+            d_tra = pd.to_datetime(row.get('NGÀY TRẢ', ''), dayfirst=True, errors='coerce')
             
-            # 3. Phân loại trạng thái
+            # LOGIC TRẠNG THÁI (Dựa trên cấu trúc sếp gửi)
             sua_nb = str(row.get('SỬA NỘI BỘ', '')).upper()
             hu_hong = str(row.get('HƯ KHÔNG SỬA ĐƯỢC', '')).strip()
-            giao_lai = str(row.get('GIAO LẠI MIỀN BẮC', '')).upper()
+            giao_lai_mb = str(row.get('GIAO LẠI MIỀN BẮC', '')).upper()
             
-            status = "🟡 ĐANG TRONG KHO"
+            # Ưu tiên 1: Thanh lý
             if "THANH LÝ" in sua_nb or hu_hong != "":
-                status = "🔴 THANH LÝ/HỦY"
-            elif pd.notnull(ngay_tra) or "OK" in giao_lai or "XONG" in giao_lai:
-                status = "🟢 ĐÃ TRẢ VỀ"
+                status = "🔴 THANH LÝ"
+            # Ưu tiên 2: Đã trả (Có ngày trả hoặc xác nhận giao lại)
+            elif pd.notnull(d_tra) or any(x in giao_lai_mb for x in ["OK", "XONG"]):
+                status = "🟢 ĐÃ XONG"
+            # Ưu tiên 3: Đang xử lý
+            else:
+                status = "🟡 TRONG KHO"
 
             data_clean.append({
                 "MÃ MÁY": ma,
                 "LOẠI MÁY": row.get('LOẠI MÁY', ''),
+                "TRÌNH TRẠNG": row.get('TRÌNH TRẠNG', ''),
                 "TRẠNG THÁI": status,
-                "NGÀY NHẬN": ngay_nhan,
-                "NGÀY TRẢ": ngay_tra,
+                "NGÀY NHẬN": d_nhan,
                 "KIỂM TRA": row.get('KIỂM TRA THỰC TẾ', ''),
                 "CHI NHÁNH": "MIỀN BẮC"
             })
             
         return pd.DataFrame(data_clean)
     except Exception as e:
-        st.error(f"Lỗi đọc File: {e}")
+        st.error(f"Lỗi truy vấn: {e}")
         return pd.DataFrame()
 
-# --- 3. HIỂN THỊ ---
-st.title("🏭 QUẢN TRỊ KHO - THỬ NGHIỆM MIỀN BẮC")
+# --- 3. GIAO DIỆN ---
+st.title("🏭 TRUY VẤN DỮ LIỆU KHO MIỀN BẮC")
 
 df_mb = load_data_mien_bac()
 
 if not df_mb.empty:
-    # KPI NHANH
-    c1, c2, c3 = st.columns(3)
-    c1.metric("Tổng nhận Miền Bắc", len(df_mb))
-    c2.metric("Đang tồn kho", len(df_mb[df_mb['TRẠNG THÁI'] == "🟡 ĐANG TRONG KHO"]))
-    c3.metric("Thanh lý", len(df_mb[df_mb['TRẠNG THÁI'] == "🔴 THANH LÝ/HỦY"]))
+    # HIỂN THỊ KPI TỔNG QUAN
+    k1, k2, k3 = st.columns(3)
+    k1.metric("Tổng thiết bị nhận", len(df_mb))
+    k2.metric("Đang sửa/Chờ trả", len(df_mb[df_mb['TRẠNG THÁI'] == "🟡 TRONG KHO"]))
+    k3.metric("Đã xử lý xong", len(df_mb[df_mb['TRẠNG THÁI'] == "🟢 ĐÃ XONG"]))
+
+    # BẢNG DỮ LIỆU CHI TIẾT
+    st.write("---")
+    st.subheader("📋 Danh sách chi tiết Miền Bắc")
+    st.dataframe(df_mb.sort_values('NGÀY NHẬN', ascending=False), use_container_width=True)
     
-    # BẢNG DỮ LIỆU
-    st.subheader("📋 Dữ liệu đọc được từ Sheet Miền Bắc")
-    st.dataframe(df_mb, use_container_width=True)
+    # BIỂU ĐỒ PHÂN TÍCH NHANH
+    st.write("---")
+    st.plotly_chart(px.bar(df_mb.groupby('TRẠNG THÁI').size().reset_index(name='SL'), 
+                           x='TRẠNG THÁI', y='SL', color='TRẠNG THÁI', title="Thống kê trạng thái"), use_container_width=True)
     
-    # BIỂU ĐỒ KIỂM TRA
-    fig = px.pie(df_mb, names='TRẠNG THÁI', title="Tỷ lệ trạng thái (Miền Bắc)")
-    st.plotly_chart(fig, use_container_width=True)
-    
-    st.success("✅ Đã kết nối thành công Sheet Miền Bắc! Sếp kiểm tra xem dữ liệu trong bảng đã đúng chưa?")
+    st.success("🎯 Dữ liệu Miền Bắc đã hiển thị thành công!")
 else:
-    st.warning("⚠️ Vẫn chưa đọc được dữ liệu. Sếp hãy nhấn nút 'R' trên bàn phím để tải lại trang.")
+    st.warning("🔄 Đang quét dữ liệu từ Sheet... Sếp hãy kiểm tra xem file Google Sheets đã có dữ liệu ở cột 'MÃ SỐ MÁY' chưa?")
