@@ -2,10 +2,10 @@ import streamlit as st
 import pandas as pd
 import plotly.express as px
 
-st.set_page_config(page_title="Thong Ke Doi Soat Kho", layout="wide")
+st.set_page_config(page_title="Doi Soat Kho V1.6", layout="wide")
 
 @st.cache_data(ttl=2)
-def load_and_process_v15():
+def load_and_process_v16():
     sources = {
         "MIEN BAC": "https://docs.google.com/spreadsheets/d/e/2PACX-1vS-UP5WFVE63byPckNy_lsT9Rys84A8pPq6cm6rFFBbOnPAsSl1QDLS_A9E45oytg/pub?gid=602348620&single=true&output=csv",
         "DA NANG": "https://docs.google.com/spreadsheets/d/e/2PACX-1vS-UP5WFVE63byPckNy_lsT9Rys84A8pPq6cm6rFFBbOnPAsSl1QDLS_A9E45oytg/pub?gid=1519063387&single=true&output=csv"
@@ -13,6 +13,7 @@ def load_and_process_v15():
     final_df = pd.DataFrame()
     for region, url in sources.items():
         try:
+            # Doc du lieu tu dong 2
             df_raw = pd.read_csv(url, skiprows=1, header=None, dtype=str).fillna("")
             data_clean = []
             for i in range(1, len(df_raw)):
@@ -21,69 +22,74 @@ def load_and_process_v15():
                 if not ma or ma.upper() in ["NAN", "0", "MÃ SỐ MÁY"]: continue
                 
                 kttt = str(row[6]).upper()  # Cot G
-                snb = (str(row[7]) + str(row[8])).upper() # Cot H, I
                 sbn = (str(row[9]) + str(row[11])).upper() # Cot J, L
-                gl = str(row[13]).upper().strip() # Cot N
+                gl = str(row[13]).upper().strip() # Cot N: "GIAO LAI"
                 
-                keywords_tl = ["THANH LÝ", "KHÔNG SỬA", "HỎNG"]
-                if any(x in kttt for x in keywords_tl) or any(x in sbn for x in keywords_tl):
-                    stt = "THANH_LY"
-                elif (("OK" in kttt) or ("OK" in sbn)) and (gl == "R"):
-                    stt = "DA_TRA_VE"
-                elif ("OK" in sbn) and (gl != "R"):
-                    stt = "KHO_NHAN"
+                # --- LOGIC CHUẨN THEO SẾP CHỈ ĐẠO ---
+                
+                # 1. ƯU TIÊN CAO NHẤT: Nếu cột N là "R" -> ĐÃ TRẢ VỀ CHI NHÁNH
+                if gl == "R":
+                    stt = "GREEN_R" 
+                
+                # 2. Nếu không phải R, nhưng có từ khóa Thanh lý/Không sửa được -> THANH LÝ
+                elif any(x in kttt for x in ["THANH LÝ", "KHÔNG SỬA"]) or \
+                     any(x in sbn for x in ["THANH LÝ", "KHÔNG SỬA"]):
+                    stt = "RED_TL"
+                
+                # 3. Nếu không phải R, nhưng Sửa bên ngoài báo OK -> KHO NHẬN (Đợi giao)
+                elif "OK" in sbn:
+                    stt = "BLUE_KHO"
+                
+                # 4. Còn lại là đang xử lý
                 else:
-                    stt = "DANG_XU_LY"
+                    stt = "YELLOW_SUA"
 
-                data_clean.append({"CHI_NHANH": region, "MA_MAY": ma, "STT": stt})
+                data_clean.append({
+                    "CHI_NHANH": region, 
+                    "MA_MAY": ma, 
+                    "STT_CODE": stt,
+                    "KTTT": row[6],
+                    "SBN": sbn,
+                    "GIAO_LAI": gl
+                })
             final_df = pd.concat([final_df, pd.DataFrame(data_clean)], ignore_index=True)
         except: continue
     return final_df
 
-# --- HIEN THI ---
-st.title("📊 BÁO CÁO ĐỐI SOÁT KHO TỔNG HỢP")
-df = load_and_process_v15()
+# --- GIAO DIEN THONG KE ---
+st.title("📊 HỆ THỐNG ĐỐI SOÁT V1.6 (ƯU TIÊN CỘT N: 'R')")
+df = load_and_process_v16()
 
 if not df.empty:
-    # 1. BANG THONG KE TONG HOP
-    st.subheader("📝 1. Bảng số liệu tổng hợp theo Miền")
-    
-    # Tao bang thong ke
+    # Bang thong ke tom tat
     summary = df.groupby('CHI_NHANH').agg(
         Tong_Nhan=('MA_MAY', 'count'),
-        Thanh_Ly=('STT', lambda x: (x == 'THANH_LY').sum()),
-        Da_Tra_R=('STT', lambda x: (x == 'DA_TRA_VE').sum()),
-        Kho_Nhan_Doi_Chieu=('STT', lambda x: (x == 'KHO_NHAN').sum()),
-        Dang_Sua_Kiem_Tra=('STT', lambda x: (x == 'DANG_XU_LY').sum())
+        Da_Tra_Ve_R=('STT_CODE', lambda x: (x == 'GREEN_R').sum()),
+        Thanh_Ly=('STT_CODE', lambda x: (x == 'RED_TL').sum()),
+        Kho_Nhan_Cho_R=('STT_CODE', lambda x: (x == 'BLUE_KHO').sum()),
+        Dang_Xu_Ly=('STT_CODE', lambda x: (x == 'YELLOW_SUA').sum())
     ).reset_index()
     
-    # Tinh toan Thuc Nhan = Tong - Thanh Ly
-    summary['Thuc_Nhan_Van_Hanh'] = summary['Tong_Nhan'] - summary['Thanh_Ly']
-    
-    # Sap xep lai cot cho de nhìn
-    summary = summary[['CHI_NHANH', 'Tong_Nhan', 'Thanh_Ly', 'Thuc_Nhan_Van_Hanh', 'Da_Tra_R', 'Kho_Nhan_Doi_Chieu', 'Dang_Sua_Kiem_Tra']]
-    
-    # Hien thi bang summary
+    # Thuc Nhan = Tong - Thanh Ly - Da Tra R (May dang thuc te nam tai kho ky thuat)
+    summary['Dang_Tai_Kho_KT'] = summary['Tong_Nhan'] - summary['Da_Tra_Ve_R'] - summary['Thanh_Ly']
+
+    st.subheader("📝 Bảng số liệu đối soát theo Miền")
     st.table(summary)
 
-    # 2. TONG CONG TOAN HE THONG
-    st.subheader("🌎 2. Tổng cộng toàn hệ thống")
-    t1, t2, t3, t4 = st.columns(4)
-    t1.metric("Tổng Nhận 2 Miền", summary['Tong_Nhan'].sum())
-    t2.metric("Tổng Thanh Lý", summary['Thanh_Ly'].sum())
-    t3.metric("Thực Nhận Toàn Hệ Thống", summary['Thuc_Nhan_Van_Hanh'].sum())
-    t4.metric("Tổng Đã Trả (R)", summary['Da_Tra_R'].sum())
+    # Metrics tong quat
+    c1, c2, c3, c4 = st.columns(4)
+    c1.metric("Tổng Nhận", summary['Tong_Nhan'].sum())
+    c2.metric("Đã Trả Miền (R)", summary['Da_Tra_Ve_R'].sum())
+    c3.metric("Tổng Thanh Lý", summary['Thanh_Ly'].sum())
+    c4.metric("Đang tại Kho KT", summary['Dang_Tai_Kho_KT'].sum())
 
-    # 3. BIỂU ĐỒ SO SÁNH
+    # Bieu do
     st.write("---")
-    fig_compare = px.bar(summary, x='CHI_NHANH', 
-                         y=['Da_Tra_R', 'Kho_Nhan_Doi_Chieu', 'Dang_Sua_Kiem_Tra', 'Thanh_Ly'],
-                         title="So sánh trạng thái giữa 2 Miền",
-                         barmode='group')
-    st.plotly_chart(fig_compare, use_container_width=True)
+    fig = px.bar(summary, x='CHI_NHANH', y=['Da_Tra_Ve_R', 'Thanh_Ly', 'Kho_Nhan_Cho_R', 'Dang_Xu_Ly'],
+                 title="Phân tích luồng máy qua cột Giao Lại (N)", barmode='stack')
+    st.plotly_chart(fig, use_container_width=True)
 
-    # 4. DANH SACH CHI TIET
-    with st.expander("Xem danh sách chi tiết để đối soát từng mã máy"):
-        st.dataframe(df, use_container_width=True)
+    with st.expander("Kiểm tra danh sách máy 'Đã Trả Miền (R)'"):
+        st.dataframe(df[df['STT_CODE'] == "GREEN_R"], use_container_width=True)
 else:
-    st.error("Chưa có dữ liệu. Sếp hãy kiểm tra lại kết nối Sheets.")
+    st.error("Lỗi kết nối dữ liệu.")
