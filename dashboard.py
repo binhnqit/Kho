@@ -107,72 +107,83 @@ def main():
             sel_month = st.selectbox("Chọn Tháng", ["Tất cả"] + months)
 
     # Tabs chức năng
+    # --- TABS DEFINITION ---
     tabs = st.tabs(["📊 XU HƯỚNG", "💰 CHI PHÍ", "🩺 SỨC KHỎE", "📦 KHO", "🧠 AI", "📥 NHẬP DỮ LIỆU"])
 
-    # --- TAB 0: XU HƯỚNG (ĐỌC TỪ DATABASE) ---
+    # --- TAB 0: XU HƯỚNG (ENTERPRISE DASHBOARD) ---
     with tabs[0]:
-    if df_db.empty:
-        st.info("Chào sếp, dữ liệu đang trống. Hãy nạp CSV tại tab Nhập liệu.")
-    else:
-        # A. KPI NÂNG CẤP (QUAN TRỌNG NHẤT)
-        total = len(df_view)
-        # Giả lập logic từ cột TÌNH TRẠNG/NGÀY TRẢ (Pro cần map đúng cột trong DB)
-        done_cases = len(df_view[df_view['status'] == 'DONE']) 
-        pending_cases = len(df_view[df_view['status'] == 'PENDING'])
-        failed_cases = len(df_view[df_view['status'] == 'FAILED']) # Hư không sửa được
-        
-        done_rate = (done_cases / total * 100) if total > 0 else 0
-        
-        c1, c2, c3, c4 = st.columns(4)
-        c1.metric("TỔNG CASE", total)
-        c2.metric("ĐÃ SỬA XONG", done_cases, f"{done_rate:.1st}%")
-        c3.metric("ĐANG TỒN ĐỌNG", pending_cases, delta="-15% (vs t.trước)", delta_color="inverse")
-        c4.metric("HƯ - THANH LÝ", failed_cases, delta="⚠️ Rủi ro tài sản", delta_color="normal")
+        if df_db.empty:
+            st.info("👋 Chào sếp! Database đang trống. Sếp vui lòng sang tab **NHẬP DỮ LIỆU** để khởi tạo.")
+        else:
+            # 1. LỌC DỮ LIỆU THEO KỲ (NĂM/THÁNG)
+            df_view = df_db[df_db['NĂM'] == sel_year]
+            if sel_month != "Tất cả":
+                df_view = df_view[df_view['THÁNG'] == sel_month]
 
-        st.divider()
+            st.subheader(f"🚀 BÁO CÁO VẬN HÀNH - THÁNG {sel_month}/{sel_year}")
 
-        # B. BIỂU ĐỒ "NÓI CHUYỆN"
-        col_left, col_right = st.columns([1, 1])
-        
-        with col_left:
-            # 1. Funnel sửa chữa: Nhìn phát biết nghẽn ở đâu
-            # Giả định dữ liệu có các bước quy trình
-            funnel_data = dict(
-                number=[total, total*0.9, total*0.7, total*0.4, done_cases],
-                stage=["Nhận máy", "Đã kiểm tra", "Sửa nội bộ", "Sửa ngoài", "Hoàn tất"]
-            )
-            fig_funnel = px.funnel(funnel_data, x='number', y='stage', 
-                                   title="PHÂN TÍCH LUỒNG VẬN HÀNH (FUNNEL)",
-                                   color_discrete_sequence=[ORANGE_COLORS[2]])
-            st.plotly_chart(fig_funnel, use_container_width=True)
+            # 2. KPI NÂNG CẤP: CHẤT LƯỢNG & HIỆU SUẤT
+            total_cases = len(df_view)
+            # Giả định cột 'status' có các giá trị: 'DONE', 'PENDING', 'FAILED', 'REPAIRING'
+            done_cases = len(df_view[df_view['status'] == 'DONE'])
+            pending_cases = len(df_view[df_view['status'] == 'PENDING'])
+            failed_cases = len(df_view[df_view['status'] == 'FAILED'])
+            
+            done_rate = (done_cases / total_cases * 100) if total_cases > 0 else 0
 
-        with col_right:
-            # 2. Heatmap Vùng x Trạng thái: Biết vùng nào "lì" nhất
-            # Matrix: Miền Bắc/Đà Nẵng vs Đang sửa/Tồn/Hư
-            heatmap_data = df_view.groupby(['VÙNG', 'status']).size().unstack(fill_value=0)
-            fig_heat = px.imshow(heatmap_data, text_auto=True, 
-                                 title="HEATMAP: ĐIỂM NÓNG THEO KHU VỰC",
-                                 color_continuous_scale='Oranges')
-            st.plotly_chart(fig_heat, use_container_width=True)
+            k1, k2, k3, k4 = st.columns(4)
+            k1.metric("TỔNG CASE", f"{total_cases} máy")
+            k2.metric("ĐÃ SỬA XONG", f"{done_cases} máy", f"{done_rate:.1f}%")
+            k3.metric("TỒN ĐỌNG", f"{pending_cases} máy", delta="⚠️ Cần xử lý", delta_color="inverse")
+            k4.metric("HƯ - THANH LÝ", f"{failed_cases} máy", delta="Rủi ro tài sản")
 
-        # C. SO SÁNH & INSIGHT (DÀNH CHO SẾP)
-        st.subheader("📉 QUẢN TRỊ RỦI RO & INSIGHT")
-        i1, i2 = st.columns(2)
-        
-        with i1:
-            st.markdown(f"""
-            ### ⚠️ Cảnh báo vận hành
-            * **Vùng nóng:** {df_view['VÙNG'].mode()[0] if not df_view.empty else 'N/A'} đang có tỷ lệ tồn cao nhất (35%).
-            * **Nghẽn:** Bước **'Sửa ngoài'** chiếm 60% thời gian xử lý. Cần xem xét lại đối tác sửa chữa.
-            """)
-        
-        with i2:
-            st.markdown(f"""
-            ### 💰 Tối ưu chi phí
-            * **Tỷ lệ đền bù:** Hiện chiếm 5% tổng case. Tập trung ở dòng máy đời cũ.
-            * **Dự báo:** Với tốc độ này, tháng tới sẽ tồn đọng ~10 máy nếu không tăng ca sửa nội bộ.
-            """)
+            st.divider()
 
+            # 3. BIỂU ĐỒ CHIẾN LƯỢC
+            c1, c2 = st.columns([1, 1])
+            
+            with c1:
+                # FUNNEL: NHÌN PHÁT BIẾT NGHẼN Ở ĐÂU
+                # Dữ liệu mẫu cho luồng vận hành
+                funnel_stages = ["Nhận máy", "Đang sửa", "Sửa ngoài", "Hoàn tất"]
+                funnel_values = [total_cases, pending_cases + done_cases, pending_cases // 2, done_cases]
+                
+                fig_funnel = px.funnel(
+                    dict(number=funnel_values, stage=funnel_stages),
+                    x='number', y='stage',
+                    title="PHÂN TÍCH LUỒNG SỬA CHỮA (FUNNEL)",
+                    color_discrete_sequence=[ORANGE_COLORS[0]]
+                )
+                st.plotly_chart(fig_funnel, use_container_width=True)
+
+            with c2:
+                # HEATMAP: BIẾT VÙNG NÀO ĐANG TỒN NHIỀU NHẤT
+                if not df_view.empty:
+                    heat_df = df_view.groupby(['VÙNG', 'status']).size().unstack(fill_value=0)
+                    fig_heat = px.imshow(
+                        heat_df, text_auto=True,
+                        title="HEATMAP: TRẠNG THÁI THEO KHU VỰC",
+                        color_continuous_scale='Oranges'
+                    )
+                    st.plotly_chart(fig_heat, use_container_width=True)
+                else:
+                    st.info("Chưa đủ dữ liệu để vẽ Heatmap")
+
+            # 4. INSIGHT DÀNH CHO QUẢN TRỊ
+            st.markdown("---")
+            st.subheader("📉 INSIGHT & CẢNH BÁO RỦI RO")
+            i1, i2 = st.columns(2)
+            
+            with i1:
+                st.warning("⚠️ **Vấn đề tồn đọng:**")
+                st.write(f"- Tỷ lệ hoàn thành đang đạt {done_rate:.1f}%.")
+                st.write(f"- {pending_cases} máy đang kẹt ở khâu kiểm tra và sửa ngoài.")
+                
+            with i2:
+                st.success("💡 **Đề xuất tối ưu:**")
+                top_vung = df_view['VÙNG'].mode()[0] if not df_view.empty else "N/A"
+                st.write(f"- Tập trung nhân lực cho vùng **{top_vung}** vì lượng máy nhận cao nhất.")
+                st.write("- Rà soát lại danh sách 'Hư - Thanh lý' để thu hồi linh kiện.")
     # --- TAB 5: NHẬP DỮ LIỆU (HỖ TRỢ MB & ĐN) ---
     with tabs[5]:
         st.subheader("📥 CỔNG NHẬP DỮ LIỆU ĐA PHÂN CÔNG")
