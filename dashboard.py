@@ -22,8 +22,7 @@ except Exception as e:
 @st.cache_data(ttl=60) # Cache trong 1 phút để tối ưu tốc độ
 def load_data_from_db():
     try:
-        # Truy vấn JOIN 3 bảng: Cases -> Machines -> Costs
-        # Lưu ý: Syntax select() này giúp lấy dữ liệu từ các bảng quan hệ
+        # Truy vấn lấy Case + Machine + Costs
         res = supabase.table("repair_cases").select(
             "*, machines(machine_code, machine_type), repair_costs(estimated_cost, actual_cost, confirmed_by)"
         ).execute()
@@ -31,27 +30,40 @@ def load_data_from_db():
         if not res.data:
             return pd.DataFrame()
             
-        # Làm phẳng dữ liệu JSON (Nested JSON to Flat DataFrame)
         df = pd.json_normalize(res.data)
         
-        # Đổi tên cột để dễ làm việc và khớp với code cũ
-        df = df.rename(columns={
+        # MAPPING CỘT - Đảm bảo tên cột khớp tuyệt đối với tab Xu hướng
+        mapping = {
             "machines.machine_code": "MÃ_MÁY",
             "machines.machine_type": "LOẠI_MÁY",
             "repair_costs.actual_cost": "CHI_PHÍ_THỰC",
             "repair_costs.estimated_cost": "CHI_PHÍ_DỰ_KIẾN",
             "repair_costs.confirmed_by": "NGƯỜI_KIỂM_TRA",
-            "branch": "VÙNG" # Khớp với biểu đồ cũ của pro
-        })
+            "branch": "VÙNG"
+        }
         
-        # Xử lý ngày tháng từ cột confirmed_date (Ngày xác nhận)
-        if 'confirmed_date' in df.columns:
+        # Chỉ đổi tên những cột thực sự tồn tại trong dữ liệu trả về
+        existing_mapping = {k: v for k, v in mapping.items() if k in df.columns}
+        df = df.rename(columns=existing_mapping)
+        
+        # CỦNG CỐ DỮ LIỆU: Nếu thiếu cột do DB trống, tự tạo cột đó với giá trị 0/Rỗng
+        expected_cols = ["CHI_PHÍ_THỰC", "CHI_PHÍ_DỰ_KIẾN", "MÃ_MÁY", "VÙNG", "is_unrepairable", "issue_reason"]
+        for col in expected_cols:
+            if col not in df.columns:
+                df[col] = 0 if "CHI_PHÍ" in col else "Chưa xác định"
+
+        # Xử lý thời gian
+        if 'confirmed_date' in df.columns and df['confirmed_date'].notnull().any():
             df['confirmed_date'] = pd.to_datetime(df['confirmed_date'])
             df['NĂM'] = df['confirmed_date'].dt.year
             df['THÁNG'] = df['confirmed_date'].dt.month
-        return df
+        else:
+            df['NĂM'] = datetime.datetime.now().year
+            df['THÁNG'] = datetime.datetime.now().month
+
+        return df.fillna(0) # Thay thế các giá trị NaN bằng 0 để tránh lỗi tính toán sum()
     except Exception as e:
-        st.error(f"Lỗi Database: {e}")
+        st.error(f"Lỗi Load Data: {e}")
         return pd.DataFrame()
 
 def import_to_enterprise_schema(df):
