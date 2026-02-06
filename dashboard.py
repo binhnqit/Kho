@@ -21,34 +21,37 @@ except Exception as e:
 
 @st.cache_data(ttl=60) # Cache trong 1 phút để tối ưu tốc độ
 def load_enterprise_dashboard_data():
-    # Query kết hợp 3 bảng chính để lấy đầy đủ thông tin xu hướng
-    query = """
-    SELECT 
-        rc.id as case_id,
-        m.machine_code,
-        m.machine_type,
-        rc.branch,
-        rc.customer_name,
-        rc.issue_reason,
-        rc.confirmed_date,
-        rc.is_unrepairable,
-        costs.estimated_cost,
-        costs.actual_cost,
-        costs.confirmed_by
-    FROM repair_cases rc
-    JOIN machines m ON rc.machine_id = m.id
-    LEFT JOIN repair_costs costs ON rc.id = costs.repair_case_id
-    """
-    res = supabase.rpc("get_repair_summary").execute() # Hoặc dùng query select trực tiếp
-    # Nếu không dùng RPC, pro dùng syntax của Supabase-py:
-    res = supabase.table("repair_cases").select(
-        "id, branch, customer_name, issue_reason, confirmed_date, is_unrepairable, "
-        "machines(machine_code, machine_type), "
-        "repair_costs(estimated_cost, actual_cost, confirmed_by)"
-    ).execute()
-    
-    df = pd.json_normalize(res.data) # Chuyển đổi nested JSON thành bảng phẳng
-    return df
+    try:
+        # Truy vấn kết hợp: Lấy Case -> kèm thông tin Machine -> kèm thông tin Cost
+        res = supabase.table("repair_cases").select(
+            "id, branch, customer_name, issue_reason, confirmed_date, is_unrepairable, compensation, "
+            "machines(machine_code, machine_type), "
+            "repair_costs(estimated_cost, actual_cost, confirmed_by)"
+        ).execute()
+        
+        if not res.data:
+            return pd.DataFrame()
+            
+        # Chuyển đổi dữ liệu JSON lồng nhau thành bảng phẳng (Flatten)
+        df = pd.json_normalize(res.data)
+        
+        # Đổi tên cột cho dễ sử dụng
+        df = df.rename(columns={
+            "machines.machine_code": "MÃ_MÁY",
+            "machines.machine_type": "LOẠI_MÁY",
+            "repair_costs.actual_cost": "CHI_PHÍ_THỰC",
+            "repair_costs.estimated_cost": "CHI_PHÍ_DỰ_KIẾN",
+            "repair_costs.confirmed_by": "NGƯỜI_KIỂM_TRA"
+        })
+        
+        # Xử lý ngày tháng
+        df['confirmed_date'] = pd.to_datetime(df['confirmed_date'])
+        df['NĂM'] = df['confirmed_date'].dt.year
+        df['THÁNG'] = df['confirmed_date'].dt.month
+        return df
+    except Exception as e:
+        st.error(f"Lỗi truy vấn: {e}")
+        return pd.DataFrame()
 
 def smart_import_repair_data(df):
     """Hàm import thông minh chấp nhận cả mẫu MB và ĐN"""
@@ -113,72 +116,60 @@ def main():
 
     # Tabs chức năng
     # --- TABS DEFINITION ---
+    # --- TABS DEFINITION ---
     tabs = st.tabs(["📊 XU HƯỚNG", "💰 CHI PHÍ", "🩺 SỨC KHỎE", "📦 KHO", "🧠 AI", "📥 NHẬP DỮ LIỆU"])
 
-    # --- TAB 0: XU HƯỚNG (ENTERPRISE DASHBOARD) ---
     with tabs[0]:
-    df_main = load_enterprise_dashboard_data()
-    
-    if df_main.empty:
-        st.info("Chưa có dữ liệu sự vụ sửa chữa. Sếp hãy nhập dữ liệu từ Google Sheet vào.")
-    else:
-        # Chuẩn hóa thời gian từ confirmed_date
-        df_main['confirmed_date'] = pd.to_datetime(df_main['confirmed_date'])
+        # Dòng 120: Đã thụt lề chuẩn 4 khoảng trắng
+        df_main = load_enterprise_dashboard_data()
         
-        # --- KPI TÀI CHÍNH & VẬN HÀNH THỰC TẾ ---
-        total_actual = df_main['repair_costs.actual_cost'].sum()
-        total_est = df_main['repair_costs.estimated_cost'].sum()
-        leakage = total_est - total_actual # Chênh lệch dự kiến vs thực tế
-        
-        c1, c2, c3, c4 = st.columns(4)
-        c1.metric("TỔNG CHI PHÍ THỰC", f"{total_actual:,.0f} đ")
-        c2.metric("CHÊNH LỆCH DỰ KIẾN", f"{leakage:,.0f} đ", delta_color="inverse")
-        c3.metric("MÁY KHÔNG SỬA ĐƯỢC", len(df_main[df_main['is_unrepairable'] == True]))
-        c4.metric("TỔNG KHÁCH HÀNG", df_main['customer_name'].nunique())
+        if df_main.empty:
+            st.info("👋 Chào sếp! Hiện tại chưa có dữ liệu sự vụ sửa chữa nào được ghi nhận.")
+        else:
+            # Lọc theo Sidebar (Năm/Tháng)
+            df_view = df_main[df_main['NĂM'] == sel_year]
+            if sel_month != "Tất cả":
+                df_view = df_view[df_view['THÁNG'] == sel_month]
 
-        st.divider()
+            st.subheader(f"📊 PHÂN TÍCH XU HƯỚNG SỬA CHỮA {sel_month}/{sel_year}")
 
-        # --- BIỂU ĐỒ XU HƯỚNG LỖI (Sếp cần cái này!) ---
-        col1, col2 = st.columns(2)
-        with col1:
-            # Top lý do hỏng
-            issue_counts = df_main['issue_reason'].value_counts().reset_index()
-            fig_issue = px.bar(issue_counts, x='index', y='issue_reason', 
-                               title="PHÂN TÍCH LÝ DO HỎNG (XU HƯỚNG LỖI)",
-                               labels={'index': 'Lý do', 'issue_reason': 'Số ca'},
-                               color_discrete_sequence=[ORANGE_COLORS[0]])
-            st.plotly_chart(fig_issue, use_container_width=True)
+            # --- KPI BLOCK ---
+            m1, m2, m3, m4 = st.columns(4)
+            total_actual = df_view['CHI_PHÍ_THỰC'].sum()
+            avg_cost = df_view['CHI_PHÍ_THỰC'].mean()
+            unrepairable = df_view['is_unrepairable'].sum()
             
-        with col2:
-            # Phân bổ chi phí theo chi nhánh (Miền Bắc vs Đà Nẵng)
-            branch_costs = df_main.groupby('branch')['repair_costs.actual_cost'].sum().reset_index()
-            fig_branch = px.pie(branch_costs, names='branch', values='repair_costs.actual_cost',
-                                title="CƠ CẤU CHI PHÍ THEO CHI NHÁNH",
-                                hole=0.4, color_discrete_sequence=ORANGE_COLORS)
-            st.plotly_chart(fig_branch, use_container_width=True)
+            m1.metric("TỔNG CHI PHÍ THỰC", f"{total_actual:,.0f} đ")
+            m2.metric("TRUNG BÌNH/CA", f"{avg_cost:,.0f} đ")
+            m3.metric("CA KHÔNG SỬA ĐƯỢC", f"{unrepairable} ca", delta="Rủi ro", delta_color="inverse")
+            m4.metric("TỔNG SỰ VỤ", f"{len(df_view)} ca")
 
-        # --- BẢNG CHI TIẾT SỰ VỤ ---
-        st.subheader("📋 DANH SÁCH SỰ VỤ SỬA CHỮA CHI TIẾT")
-        st.dataframe(df_main[[
-            'machines.machine_code', 'customer_name', 'issue_reason', 
-            'branch', 'confirmed_date', 'repair_costs.actual_cost'
-        ]].sort_values('confirmed_date', ascending=False), use_container_width=True)
+            st.divider()
 
-            # 4. INSIGHT DÀNH CHO QUẢN TRỊ
-            st.markdown("---")
-            st.subheader("📉 INSIGHT & CẢNH BÁO RỦI RO")
-            i1, i2 = st.columns(2)
+            # --- VISUALIZATION BLOCK ---
+            col1, col2 = st.columns(2)
             
-            with i1:
-                st.warning("⚠️ **Vấn đề tồn đọng:**")
-                st.write(f"- Tỷ lệ hoàn thành đang đạt {done_rate:.1f}%.")
-                st.write(f"- {pending_cases} máy đang kẹt ở khâu kiểm tra và sửa ngoài.")
-                
-            with i2:
-                st.success("💡 **Đề xuất tối ưu:**")
-                top_vung = df_view['VÙNG'].mode()[0] if not df_view.empty else "N/A"
-                st.write(f"- Tập trung nhân lực cho vùng **{top_vung}** vì lượng máy nhận cao nhất.")
-                st.write("- Rà soát lại danh sách 'Hư - Thanh lý' để thu hồi linh kiện.")
+            with col1:
+                # Top lý do hỏng - Đây là cái sếp cần để quản trị chất lượng
+                issue_data = df_view['issue_reason'].value_counts().reset_index()
+                issue_data.columns = ['Lý do', 'Số lượng']
+                fig_issue = px.bar(issue_data.head(10), x='Số lượng', y='Lý do', 
+                                   orientation='h', title="TOP 10 LÝ DO HỎNG PHỔ BIẾN",
+                                   color='Số lượng', color_continuous_scale='Oranges')
+                st.plotly_chart(fig_issue, use_container_width=True)
+
+            with col2:
+                # So sánh Dự kiến vs Thực tế theo Chi nhánh
+                cost_compare = df_view.groupby('branch')[['CHI_PHÍ_DỰ_KIẾN', 'CHI_PHÍ_THỰC']].sum().reset_index()
+                fig_cost = px.bar(cost_compare, x='branch', y=['CHI_PHÍ_DỰ_KIẾN', 'CHI_PHÍ_THỰC'],
+                                  barmode='group', title="SO SÁNH CHI PHÍ THEO CHI NHÁNH",
+                                  color_discrete_sequence=["#BDC3C7", "#FF8C00"])
+                st.plotly_chart(fig_cost, use_container_width=True)
+
+            # --- BẢNG CHI TIẾT THEO FILE GOOGLE SHEET ---
+            st.subheader("📋 CHI TIẾT CÁC CA SỬA CHỮA TRONG KỲ")
+            display_cols = ['MÃ_MÁY', 'customer_name', 'issue_reason', 'branch', 'confirmed_date', 'CHI_PHÍ_THỰC', 'NGƯỜI_KIỂM_TRA']
+            st.dataframe(df_view[display_cols].sort_values('confirmed_date', ascending=False), use_container_width=True)
     # --- TAB 5: NHẬP DỮ LIỆU (HỖ TRỢ MB & ĐN) ---
     with tabs[5]:
         st.subheader("📥 CỔNG NHẬP DỮ LIỆU ĐA PHÂN CÔNG")
