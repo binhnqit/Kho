@@ -149,24 +149,39 @@ def load_enterprise_data(sel_year, sel_month):
 # --- 3. GIAO DIỆN CHÍNH ---
 
 def main():
-    # Sidebar: Lọc dữ liệu từ DB
+    # --- SIDEBAR LOGIC ---
     with st.sidebar:
+        st.image("https://upload.wikimedia.org/wikipedia/commons/d/d0/Logo_4Oranges.png", width=150) # Tùy chọn logo sếp nhé
         st.title("🎨 4ORANGES OPS")
+        
         if st.button('🔄 REFRESH DATABASE', type="primary", use_container_width=True):
             st.cache_data.clear()
             st.rerun()
 
+        st.divider()
+
+        # Load dữ liệu để lấy danh sách Năm
         df_db = load_data_from_db()
         
-        sel_year = datetime.datetime.now().year
-        sel_month = "Tất cả"
+        current_year = datetime.datetime.now().year
+        
+        if not df_db.empty and 'NĂM' in df_db.columns:
+            # Lấy danh sách năm duy nhất, lọc bỏ giá trị 0 hoặc NaN
+            list_years = sorted([int(y) for y in df_db['NĂM'].unique() if y > 0], reverse=True)
+            if not list_years:
+                list_years = [current_year]
+        else:
+            list_years = [current_year]
 
-        if not df_db.empty:
-            years = sorted(df_db['NĂM'].unique(), reverse=True)
-            sel_year = st.selectbox("Chọn Năm", years)
-            
-            months = sorted(df_db[df_db['NĂM'] == sel_year]['THÁNG'].unique().tolist())
-            sel_month = st.selectbox("Chọn Tháng", ["Tất cả"] + months)
+        # Fix lỗi "No results": Luôn có ít nhất năm hiện tại
+        sel_year = st.selectbox("📅 Chọn Năm", list_years, index=0)
+        
+        # Logic chọn Tháng tương tự
+        if not df_db.empty and 'THÁNG' in df_db.columns:
+            list_months = sorted([int(m) for m in df_db[df_db['NĂM'] == sel_year]['THÁNG'].unique() if m > 0])
+            sel_month = st.selectbox("📆 Chọn Tháng", ["Tất cả"] + list_months)
+        else:
+            sel_month = st.selectbox("📆 Chọn Tháng", ["Tất cả"])
 
     # Tabs chức năng
     # --- TABS DEFINITION ---
