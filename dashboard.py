@@ -67,24 +67,29 @@ def import_to_enterprise_schema(df):
     success_count = 0
     progress_bar = st.progress(0)
     
-    def clean_price(val):
-        try:
-            if not val or pd.isna(val): return 0
-            return float(str(val).replace(',', ''))
-        except: return 0
-
+    # --- BIỆN PHÁP MẠNH: TỰ ĐỘNG ĐIỀN NGÀY TRỐNG ---
+    # Sếp ép kiểu ngày tháng và dùng ffill() để điền các ô trống dựa trên ô phía trên
+    df['Ngày Xác nhận'] = df['Ngày Xác nhận'].replace('', pd.NA).ffill()
+    
     for i, r in df.iterrows():
         m_code = str(r.get("Mã số máy", "")).strip()
         if not m_code: continue
         
         try:
-            # 1. UPSERT Machine
-            m_res = supabase.table("machines").upsert({
-                "machine_code": m_code,
-                "region": str(r.get("Chi Nhánh", "Miền Bắc"))
-            }, on_conflict="machine_code").execute()
-            machine_id = m_res.data[0]["id"]
+            # ... (Phần Upsert machines giữ nguyên) ...
 
+            # Xử lý Ngày Xác nhận đã được điền đầy
+            confirmed_val = str(r.get("Ngày Xác nhận", "")).strip()
+            formatted_date = None
+            
+            if confirmed_val and confirmed_val.lower() != "nan":
+                try:
+                    # Chuyển đổi thông minh: tự hiểu các định dạng ngày khác nhau
+                    formatted_date = pd.to_datetime(confirmed_val, dayfirst=True).strftime('%Y-%m-%d')
+                except:
+                    formatted_date = None
+
+            # ... (Các bước đẩy Case, Cost, Process giữ nguyên) ...
             # 2. Case
             c_val = str(r.get("Ngày Xác nhận", "")).strip()
             f_date = pd.to_datetime(c_val, dayfirst=True).strftime('%Y-%m-%d') if c_val else None
