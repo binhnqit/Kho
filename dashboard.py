@@ -98,16 +98,18 @@ def import_to_enterprise_schema(df):
             supabase.table("repair_costs").insert(cost_payload).execute()
 
             # BƯỚC 4: Khởi tạo quy trình vào bảng 'repair_process'
-            # Mặc định là trạng thái hoàn tất nếu đã có chi phí thực tế
+            # Đảm bảo giá trị 'PENDING' hoặc 'DONE' đã được định nghĩa trong Enum repair_state
+            
+            # Giả sử sếp đã thêm PENDING và DONE vào Enum như bước 1 ở trên
+            state_value = "DONE" if cost_payload["actual_cost"] > 0 else "PENDING"
+            
             process_payload = {
                 "repair_case_id": case_id,
-                "state": "DONE" if cost_payload["actual_cost"] > 0 else "PENDING",
-                "handled_by": str(r["Người Kiểm Tra"])
+                "state": state_value, # Giá trị này phải khớp 100% với Enum trong DB
+                "handled_by": str(r["Người Kiểm Tra"]),
+                "started_at": pd.to_datetime(r["Ngày Xác nhận"], dayfirst=True).isoformat() if r["Ngày Xác nhận"] else None
             }
             supabase.table("repair_process").insert(process_payload).execute()
-
-            success_count += 1
-            progress_bar.progress((i + 1) / len(df))
 
         except Exception as e:
             st.error(f"Lỗi tại dòng mã máy {m_code}: {e}")
