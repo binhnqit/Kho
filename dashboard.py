@@ -83,17 +83,29 @@ def import_to_enterprise_schema(df):
             machine_id = m_res.data[0]["id"]
 
             # BƯỚC 2: Tạo sự vụ trong bảng 'repair_cases'
-            case_payload = {
-                "machine_id": machine_id,
-                "branch": str(r["Chi Nhánh"]),
-                "customer_name": str(r["Tên KH"]),
-                "issue_reason": str(r["Lý Do"]),
-                "note": str(r["Ghi Chú"]),
-                "confirmed_date": pd.to_datetime(r["Ngày Xác nhận"], dayfirst=True).strftime('%Y-%m-%d') if r["Ngày Xác nhận"] else None,
-                "is_unrepairable": False # Mặc định, có thể tinh chỉnh sau
-            }
-            c_res = supabase.table("repair_cases").insert(case_payload).execute()
-            case_id = c_res.data[0]["id"]
+            # Trong hàm import_to_enterprise_schema, tại Bước 2:
+            confirmed_val = str(r["Ngày Xác nhận"]).strip()
+            formatted_date = None
+
+            if confirmed_val and confirmed_val != "nan":
+                try:
+                # Ép kiểu dữ liệu ngày tháng theo định dạng dd/mm/yyyy từ file của sếp
+                formatted_date = pd.to_datetime(confirmed_val, dayfirst=True).strftime('%Y-%m-%d')
+                except:
+                    formatted_date = None
+
+                    case_payload = {
+                    "machine_id": machine_id,
+                    "branch": str(r["Chi Nhánh"]),
+                    "customer_name": str(r["Tên KH"]),
+                    "issue_reason": str(r["Lý Do"]),
+                    "note": str(r["Ghi Chú"]),
+                    "confirmed_date": formatted_date, # Đã chuẩn hóa yyyy-mm-dd
+                    "is_unrepairable": False
+                        }
+                    }
+                 c_res = supabase.table("repair_cases").insert(case_payload).execute()
+                  case_id = c_res.data[0]["id"]
 
             # BƯỚC 3: Đẩy chi phí vào bảng 'repair_costs'
             # Xử lý số liệu: xóa dấu phẩy nếu có
