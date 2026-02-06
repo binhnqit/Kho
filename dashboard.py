@@ -67,63 +67,83 @@ def import_to_enterprise_schema(df):
     success_count = 0
     progress_bar = st.progress(0)
     
-    # --- BIỆN PHÁP MẠNH: TỰ ĐỘNG ĐIỀN NGÀY TRỐNG ---
-    # Sếp ép kiểu ngày tháng và dùng ffill() để điền các ô trống dựa trên ô phía trên
-    df['Ngày Xác nhận'] = df['Ngày Xác nhận'].replace('', pd.NA).ffill()
+    # --- BIỆN PHÁP MẠNH 1: TỰ ĐIỀN NGÀY CÒN THIẾU (FORWARD FILL) ---
+    # Thay thế khoảng trắng hoặc NaN bằng giá trị của dòng phía trên
+    if 'Ngày Xác nhận' in df.columns:
+        df['Ngày Xác nhận'] = df['Ngày Xác nhận'].replace(r'^\s*$', pd.NA, regex=True).ffill()
     
+    # Hàm hỗ trợ làm sạch giá tiền
+    def clean_price(val):
+        try:
+            if not val or pd.isna(val): return 0
+            return float(str(val).replace(',', ''))
+        except: return 0
+
     for i, r in df.iterrows():
+        # Khởi tạo giá trị rỗng để tránh lỗi "not defined"
+        machine_id = None 
+        case_id = None
         m_code = str(r.get("Mã số máy", "")).strip()
-        if not m_code: continue
+        
+        if not m_code or m_code.lower() == "nan":
+            continue
         
         try:
-            # ... (Phần Upsert machines giữ nguyên) ...
+            # --- BƯỚC 1: UPSERT MACHINE ---
+            m_res = supabase.table("machines").upsert({
+                "machine_code": m_code,
+                "region": str(r.get("Chi Nhánh", "Chưa xác định"))
+            }, on_conflict="machine_code").execute()
+            
+            if m_res.data:
+                machine_id = m_res.data[0]["id"]
+            else:
+                continue # Nếu không lấy được machine_id thì bỏ qua dòng này
 
-            # Xử lý Ngày Xác nhận đã được điền đầy
+            # --- BƯỚC 2: CHUẨN HÓA NGÀY THÁNG & TẠO CASE ---
             confirmed_val = str(r.get("Ngày Xác nhận", "")).strip()
             formatted_date = None
-            
             if confirmed_val and confirmed_val.lower() != "nan":
                 try:
-                    # Chuyển đổi thông minh: tự hiểu các định dạng ngày khác nhau
                     formatted_date = pd.to_datetime(confirmed_val, dayfirst=True).strftime('%Y-%m-%d')
                 except:
                     formatted_date = None
 
-            # ... (Các bước đẩy Case, Cost, Process giữ nguyên) ...
-            # 2. Case
-            c_val = str(r.get("Ngày Xác nhận", "")).strip()
-            f_date = pd.to_datetime(c_val, dayfirst=True).strftime('%Y-%m-%d') if c_val else None
-
             case_payload = {
-                "machine_id": machine_id,
-                "branch": str(r.get("Chi Nhánh", "Miền Bắc")),
+                "machine_id": machine_id, # Đảm bảo biến đã được định nghĩa ở trên
+                "branch": str(r.get("Chi Nhánh", "Chưa xác định")),
                 "customer_name": str(r.get("Tên KH", "")),
                 "issue_reason": str(r.get("Lý Do", "")),
-                "confirmed_date": f_date
+                "confirmed_date": formatted_date
             }
             c_res = supabase.table("repair_cases").insert(case_payload).execute()
-            case_id = c_res.data[0]["id"]
+            
+            if c_res.data:
+                case_id = c_res.data[0]["id"]
 
-            # 3. Cost
-            actual = clean_price(r.get("Chi Phí Thực Tế", 0))
-            supabase.table("repair_costs").insert({
-                "repair_case_id": case_id,
-                "estimated_cost": clean_price(r.get("Chi Phí Dự Kiến", 0)),
-                "actual_cost": actual,
-                "confirmed_by": str(r.get("Người Kiểm Tra", ""))
-            }).execute()
+                # --- BƯỚC 3: ĐẨY CHI PHÍ ---
+                actual_cost = clean_price(r.get("Chi Phí Thực Tế", 0))
+                supabase.table("repair_costs").insert({
+                    "repair_case_id": case_id,
+                    "estimated_cost": clean_price(r.get("Chi Phí Dự Kiến", 0)),
+                    "actual_cost": actual_cost,
+                    "confirmed_by": str(r.get("Người Kiểm Tra", ""))
+                }).execute()
 
-            # 4. Process
-            supabase.table("repair_process").insert({
-                "repair_case_id": case_id,
-                "state": "DONE" if actual > 0 else "PENDING",
-                "handled_by": str(r.get("Người Kiểm Tra", ""))
-            }).execute()
+                # --- BƯỚC 4: QUY TRÌNH ---
+                supabase.table("repair_process").insert({
+                    "repair_case_id": case_id,
+                    "state": "DONE" if actual_cost > 0 else "PENDING",
+                    "handled_by": str(r.get("Người Kiểm Tra", ""))
+                }).execute()
 
-            success_count += 1
+                success_count += 1
+            
         except Exception as e:
-            st.error(f"Lỗi mã {m_code}: {e}")
+            st.error(f"❌ Lỗi tại dòng {i+1} (Mã máy {m_code}): {str(e)}")
+        
         progress_bar.progress((i + 1) / len(df))
+            
     return success_count
 
 # --- 4. GIAO DIỆN CHÍNH ---
