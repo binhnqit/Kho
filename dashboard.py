@@ -2,6 +2,8 @@ import streamlit as st
 import pandas as pd
 import plotly.express as px
 import datetime
+import unicodedata
+import re
 from supabase import create_client
 
 # --- 1. CONFIG & AUTH ---
@@ -20,7 +22,14 @@ except Exception as e:
 # --- 2. ĐỊNH NGHĨA CỘT CHUẨN (VALIDATION CONTRACT) ---
 FILE_1_COLS = ["MÃ SỐ MÁY", "KHU VỰC", "LOẠI MÁY", "TÌNH TRẠNG", "NGÀY NHẬN", "KIỂM TRA THỰC TẾ", "SỬA NỘI BỘ", "SỬA BÊN NGOÀI", "NGÀY SỬA XONG", "SỬA ĐỀN BÙ", "GIAO LẠI Miền Bắc", "NGÀY TRẢ", "HƯ KHÔNG SỬA ĐƯỢC"]
 FILE_2_COLS = ["Mã số máy", "Tên KH", "Lý Do", "Ghi Chú", "Chi Nhánh", "Ngày Xác nhận", "Người Kiểm Tra", "Chi Phí Dự Kiến", "Chi Phí Thực Tế"]
-
+def normalize_col(col: str) -> str:
+    col = col.strip()
+    col = col.replace("\ufeff", "")  # remove BOM
+    col = unicodedata.normalize("NFKD", col)
+    col = "".join(c for c in col if not unicodedata.combining(c))
+    col = col.lower()
+    col = re.sub(r"\s+", " ", col)
+    return col
 # --- 3. HELPER FUNCTIONS ---
 def validate_csv(df, expected_columns):
     missing = set(expected_columns) - set(df.columns)
