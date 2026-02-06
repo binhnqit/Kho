@@ -143,34 +143,76 @@ def main():
     tabs = st.tabs(["📊 XU HƯỚNG", "💰 CHI PHÍ", "📥 NHẬP DỮ LIỆU"])
 
     with tabs[0]:
+        df_db = load_data_from_db()
+        
         if df_db.empty:
-            st.info("Chưa có dữ liệu.")
+            st.info("👋 Chào sếp! Hiện tại hệ thống chưa có dữ liệu. Sếp hãy nhập dữ liệu ở tab **NHẬP DỮ LIỆU** nhé.")
         else:
-            df_view = df_db[df_db['NĂM'] == sel_year]
+            # 1. Lọc dữ liệu theo Sidebar (Năm/Tháng)
+            df_view = df_db[df_db['NĂM'] == sel_year].copy()
             if sel_month != "Tất cả":
                 df_view = df_view[df_view['THÁNG'] == sel_month]
             
-            if not df_view.empty:
+            if df_view.empty:
+                st.warning(f"⚠️ Không có dữ liệu sự vụ nào trong tháng {sel_month} năm {sel_year}.")
+            else:
+                # --- 2. KPI CHIẾN LƯỢC ---
                 k1, k2, k3 = st.columns(3)
-                k1.metric("TỔNG CHI PHÍ", f"{df_view['CHI_PHÍ_THỰC'].sum():,.0f} đ")
-                k2.metric("TỔNG SỰ VỤ", f"{len(df_view)} ca")
-                k3.metric("TB CHI PHÍ", f"{df_view['CHI_PHÍ_THỰC'].mean():,.0f} đ")
+                # Tính toán an toàn với .sum() và .mean()
+                total_cost = df_view['CHI_PHÍ_THỰC'].sum()
+                avg_cost = df_view['CHI_PHÍ_THỰC'].mean()
+                
+                k1.metric("💰 TỔNG CHI PHÍ", f"{total_cost:,.0f} đ")
+                k2.metric("📋 TỔNG SỰ VỤ", f"{len(df_view)} ca")
+                k3.metric("📈 TRUNG BÌNH/CA", f"{avg_cost:,.0f} đ")
 
-                # Biểu đồ
+                st.divider()
+
+                # --- 3. BIỂU ĐỒ TRỰC QUAN ---
                 c1, c2 = st.columns(2)
                 with c1:
-                    fig_issue = px.bar(df_view['issue_reason'].value_counts().reset_index().head(10), 
-                                      x='count', y='issue_reason', orientation='h', title="LÝ DO PHỔ BIẾN",
-                                      color_discrete_sequence=[ORANGE_COLORS[0]])
-                    st.plotly_chart(fig_issue, use_container_width=True)
+                    # Top 10 lý do hỏng
+                    if 'issue_reason' in df_view.columns:
+                        issue_counts = df_view['issue_reason'].value_counts().reset_index().head(10)
+                        issue_counts.columns = ['Lý do', 'Số lượng']
+                        fig_issue = px.bar(issue_counts, x='Số lượng', y='Lý do', orientation='h', 
+                                          title="TOP 10 LÝ DO HỎNG PHỔ BIẾN",
+                                          color_discrete_sequence=[ORANGE_COLORS[0]])
+                        st.plotly_chart(fig_issue, use_container_width=True)
+                
                 with c2:
-                    fig_pie = px.pie(df_view, names='VÙNG', values='CHI_PHÍ_THỰC', title="CHI PHÍ THEO VÙNG", hole=0.4)
-                    st.plotly_chart(fig_pie, use_container_width=True)
+                    # Chi phí theo vùng
+                    if 'VÙNG' in df_view.columns:
+                        fig_pie = px.pie(df_view, names='VÙNG', values='CHI_PHÍ_THỰC', 
+                                        title="CƠ CẤU CHI PHÍ THEO VÙNG", hole=0.4,
+                                        color_discrete_sequence=ORANGE_COLORS)
+                        st.plotly_chart(fig_pie, use_container_width=True)
 
+                # --- 4. BẢNG CHI TIẾT (BIỆN PHÁP MẠNH - KHÔNG LỖI) ---
                 st.subheader("📋 DANH SÁCH CHI TIẾT")
-                display_cols = ['MÃ_MÁY', 'customer_name', 'issue_reason', 'VÙNG', 'NGÀY_HIỂN_THỊ', 'CHI_PHÍ_THỰC']
-                st.dataframe(df_view[display_cols].sort_values('confirmed_date', ascending=False), 
-                             use_container_width=True, hide_index=True)
+                
+                # Danh sách cột sếp muốn thấy trên màn hình
+                actual_cols = ['MÃ_MÁY', 'customer_name', 'issue_reason', 'VÙNG', 'NGÀY_HIỂN_THỊ', 'CHI_PHÍ_THỰC']
+                
+                # Lọc ra những cột thực sự đang tồn tại trong dữ liệu
+                safe_cols = [c for c in actual_cols if c in df_view.columns]
+                
+                if not safe_cols:
+                    st.error("❌ Không tìm thấy các cột dữ liệu cần thiết để hiển thị bảng.")
+                else:
+                    # Xác định cột dùng để sắp xếp (Ưu tiên cột gốc confirmed_date)
+                    sort_col = 'confirmed_date' if 'confirmed_date' in df_view.columns else safe_cols[0]
+                    
+                    # LOGIC THEN CHỐT: Sắp xếp trên bảng lớn trước, sau đó mới cắt lấy safe_cols để hiện
+                    df_display = df_view.sort_values(by=sort_col, ascending=False)[safe_cols]
+                    
+                    st.dataframe(
+                        df_display, 
+                        use_container_width=True, 
+                        hide_index=True
+                    )
+                
+                st.caption(f"💡 Dữ liệu đã được đồng bộ từ Supabase. Đang hiển thị {len(df_display)} dòng.")
 
     with tabs[2]:
         st.subheader("📥 NHẬP DỮ LIỆU GOOGLE SHEET")
