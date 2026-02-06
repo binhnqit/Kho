@@ -20,30 +20,35 @@ except Exception as e:
 # --- 2. HÀM XỬ LÝ DỮ LIỆU (DATABASE SIDE) ---
 
 @st.cache_data(ttl=60) # Cache trong 1 phút để tối ưu tốc độ
-def load_data_from_db():
-    try:
-        # Lấy dữ liệu từ bảng machines
-        res = supabase.table("machines").select("*").execute()
-        df = pd.DataFrame(res.data)
-        
-        if df.empty:
-            return pd.DataFrame()
-
-        # Chuẩn hóa đặt tên để các biểu đồ cũ không bị lỗi
-        df = df.rename(columns={
-            "machine_code": "MÃ_MÁY",
-            "machine_type": "LOẠI_MÁY",
-            "region": "VÙNG",
-            "created_at": "NGÀY_NHẬP"
-        })
-        
-        # Xử lý thời gian
-        df['NGÀY_NHẬP'] = pd.to_datetime(df['NGÀY_NHẬP'])
-        df['NĂM'] = df['NGÀY_NHẬP'].dt.year
-        df['THÁNG'] = df['NGÀY_NHẬP'].dt.month
-        return df
-    except:
-        return pd.DataFrame()
+def load_enterprise_dashboard_data():
+    # Query kết hợp 3 bảng chính để lấy đầy đủ thông tin xu hướng
+    query = """
+    SELECT 
+        rc.id as case_id,
+        m.machine_code,
+        m.machine_type,
+        rc.branch,
+        rc.customer_name,
+        rc.issue_reason,
+        rc.confirmed_date,
+        rc.is_unrepairable,
+        costs.estimated_cost,
+        costs.actual_cost,
+        costs.confirmed_by
+    FROM repair_cases rc
+    JOIN machines m ON rc.machine_id = m.id
+    LEFT JOIN repair_costs costs ON rc.id = costs.repair_case_id
+    """
+    res = supabase.rpc("get_repair_summary").execute() # Hoặc dùng query select trực tiếp
+    # Nếu không dùng RPC, pro dùng syntax của Supabase-py:
+    res = supabase.table("repair_cases").select(
+        "id, branch, customer_name, issue_reason, confirmed_date, is_unrepairable, "
+        "machines(machine_code, machine_type), "
+        "repair_costs(estimated_cost, actual_cost, confirmed_by)"
+    ).execute()
+    
+    df = pd.json_normalize(res.data) # Chuyển đổi nested JSON thành bảng phẳng
+    return df
 
 def smart_import_repair_data(df):
     """Hàm import thông minh chấp nhận cả mẫu MB và ĐN"""
@@ -112,62 +117,52 @@ def main():
 
     # --- TAB 0: XU HƯỚNG (ENTERPRISE DASHBOARD) ---
     with tabs[0]:
-        if df_db.empty:
-            st.info("👋 Chào sếp! Database đang trống. Sếp vui lòng sang tab **NHẬP DỮ LIỆU** để khởi tạo.")
-        else:
-            # 1. LỌC DỮ LIỆU THEO KỲ (NĂM/THÁNG)
-            df_view = df_db[df_db['NĂM'] == sel_year]
-            if sel_month != "Tất cả":
-                df_view = df_view[df_view['THÁNG'] == sel_month]
+    df_main = load_enterprise_dashboard_data()
+    
+    if df_main.empty:
+        st.info("Chưa có dữ liệu sự vụ sửa chữa. Sếp hãy nhập dữ liệu từ Google Sheet vào.")
+    else:
+        # Chuẩn hóa thời gian từ confirmed_date
+        df_main['confirmed_date'] = pd.to_datetime(df_main['confirmed_date'])
+        
+        # --- KPI TÀI CHÍNH & VẬN HÀNH THỰC TẾ ---
+        total_actual = df_main['repair_costs.actual_cost'].sum()
+        total_est = df_main['repair_costs.estimated_cost'].sum()
+        leakage = total_est - total_actual # Chênh lệch dự kiến vs thực tế
+        
+        c1, c2, c3, c4 = st.columns(4)
+        c1.metric("TỔNG CHI PHÍ THỰC", f"{total_actual:,.0f} đ")
+        c2.metric("CHÊNH LỆCH DỰ KIẾN", f"{leakage:,.0f} đ", delta_color="inverse")
+        c3.metric("MÁY KHÔNG SỬA ĐƯỢC", len(df_main[df_main['is_unrepairable'] == True]))
+        c4.metric("TỔNG KHÁCH HÀNG", df_main['customer_name'].nunique())
 
-            st.subheader(f"🚀 BÁO CÁO VẬN HÀNH - THÁNG {sel_month}/{sel_year}")
+        st.divider()
 
-            # 2. KPI NÂNG CẤP: CHẤT LƯỢNG & HIỆU SUẤT
-            total_cases = len(df_view)
-            # Giả định cột 'status' có các giá trị: 'DONE', 'PENDING', 'FAILED', 'REPAIRING'
-            done_cases = len(df_view[df_view['status'] == 'DONE'])
-            pending_cases = len(df_view[df_view['status'] == 'PENDING'])
-            failed_cases = len(df_view[df_view['status'] == 'FAILED'])
+        # --- BIỂU ĐỒ XU HƯỚNG LỖI (Sếp cần cái này!) ---
+        col1, col2 = st.columns(2)
+        with col1:
+            # Top lý do hỏng
+            issue_counts = df_main['issue_reason'].value_counts().reset_index()
+            fig_issue = px.bar(issue_counts, x='index', y='issue_reason', 
+                               title="PHÂN TÍCH LÝ DO HỎNG (XU HƯỚNG LỖI)",
+                               labels={'index': 'Lý do', 'issue_reason': 'Số ca'},
+                               color_discrete_sequence=[ORANGE_COLORS[0]])
+            st.plotly_chart(fig_issue, use_container_width=True)
             
-            done_rate = (done_cases / total_cases * 100) if total_cases > 0 else 0
+        with col2:
+            # Phân bổ chi phí theo chi nhánh (Miền Bắc vs Đà Nẵng)
+            branch_costs = df_main.groupby('branch')['repair_costs.actual_cost'].sum().reset_index()
+            fig_branch = px.pie(branch_costs, names='branch', values='repair_costs.actual_cost',
+                                title="CƠ CẤU CHI PHÍ THEO CHI NHÁNH",
+                                hole=0.4, color_discrete_sequence=ORANGE_COLORS)
+            st.plotly_chart(fig_branch, use_container_width=True)
 
-            k1, k2, k3, k4 = st.columns(4)
-            k1.metric("TỔNG CASE", f"{total_cases} máy")
-            k2.metric("ĐÃ SỬA XONG", f"{done_cases} máy", f"{done_rate:.1f}%")
-            k3.metric("TỒN ĐỌNG", f"{pending_cases} máy", delta="⚠️ Cần xử lý", delta_color="inverse")
-            k4.metric("HƯ - THANH LÝ", f"{failed_cases} máy", delta="Rủi ro tài sản")
-
-            st.divider()
-
-            # 3. BIỂU ĐỒ CHIẾN LƯỢC
-            c1, c2 = st.columns([1, 1])
-            
-            with c1:
-                # FUNNEL: NHÌN PHÁT BIẾT NGHẼN Ở ĐÂU
-                # Dữ liệu mẫu cho luồng vận hành
-                funnel_stages = ["Nhận máy", "Đang sửa", "Sửa ngoài", "Hoàn tất"]
-                funnel_values = [total_cases, pending_cases + done_cases, pending_cases // 2, done_cases]
-                
-                fig_funnel = px.funnel(
-                    dict(number=funnel_values, stage=funnel_stages),
-                    x='number', y='stage',
-                    title="PHÂN TÍCH LUỒNG SỬA CHỮA (FUNNEL)",
-                    color_discrete_sequence=[ORANGE_COLORS[0]]
-                )
-                st.plotly_chart(fig_funnel, use_container_width=True)
-
-            with c2:
-                # HEATMAP: BIẾT VÙNG NÀO ĐANG TỒN NHIỀU NHẤT
-                if not df_view.empty:
-                    heat_df = df_view.groupby(['VÙNG', 'status']).size().unstack(fill_value=0)
-                    fig_heat = px.imshow(
-                        heat_df, text_auto=True,
-                        title="HEATMAP: TRẠNG THÁI THEO KHU VỰC",
-                        color_continuous_scale='Oranges'
-                    )
-                    st.plotly_chart(fig_heat, use_container_width=True)
-                else:
-                    st.info("Chưa đủ dữ liệu để vẽ Heatmap")
+        # --- BẢNG CHI TIẾT SỰ VỤ ---
+        st.subheader("📋 DANH SÁCH SỰ VỤ SỬA CHỮA CHI TIẾT")
+        st.dataframe(df_main[[
+            'machines.machine_code', 'customer_name', 'issue_reason', 
+            'branch', 'confirmed_date', 'repair_costs.actual_cost'
+        ]].sort_values('confirmed_date', ascending=False), use_container_width=True)
 
             # 4. INSIGHT DÀNH CHO QUẢN TRỊ
             st.markdown("---")
