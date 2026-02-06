@@ -12,7 +12,7 @@ st.set_page_config(page_title="REPAIR_OPS - 4ORANGES", layout="wide", page_icon=
 # Project ID của bạn: cigbnbaanpebwrufzxfg
 SUPABASE_URL = "https://cigbnbaanpebwrufzxfg.supabase.co"
 # Key này bạn nên lấy từ Supabase Settings -> API và dán vào Secrets của Streamlit
-SUPABASE_KEY = st.secrets.get("SUPABASE_KEY", "YOUR_ANON_KEY") 
+SUPABASE_KEY = st.secrets.get("SUPABASE_KEY", "sb_publishable_NQzqwJ4YhKC4sQGLxyLAyw_mwRFhkRf") 
 
 try:
     supabase = create_client(SUPABASE_URL, SUPABASE_KEY)
