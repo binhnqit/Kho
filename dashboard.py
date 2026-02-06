@@ -202,29 +202,30 @@ def main():
         df_db = load_data_from_db()
         
         if not df_db.empty:
-            # Lọc theo Sidebar
+            # 1. Lọc theo Năm/Tháng
             df_view = df_db[df_db['NĂM'] == sel_year]
             if sel_month != "Tất cả":
                 df_view = df_view[df_view['THÁNG'] == sel_month]
             
             if not df_view.empty:
+                # ... (Giữ nguyên phần KPI và Biểu đồ bên trên) ...
+
                 st.subheader(f"📋 CHI TIẾT SỰ VỤ {sel_month}/{sel_year}")
                 
-                # DANH SÁCH CỘT MONG MUỐN
+                # 2. SẮP XẾP TRƯỚC (Sắp xếp trên df_view gốc để chắc chắn có cột confirmed_date)
+                if 'confirmed_date' in df_view.columns:
+                    df_sorted = df_view.sort_values(by='confirmed_date', ascending=False)
+                else:
+                    df_sorted = df_view.copy() # Nếu không có ngày thì giữ nguyên
+
+                # 3. CHỌN CỘT HIỂN THỊ SAU
                 target_cols = ['MÃ_MÁY', 'customer_name', 'issue_reason', 'VÙNG', 'NGÀY_XÁC_NHẬN', 'CHI_PHÍ_THỰC']
+                # Chỉ lấy những cột thực sự có trong DataFrame sau khi đã rename
+                display_cols = [c for c in target_cols if c in df_sorted.columns]
                 
-                # BIỆN PHÁP MẠNH: Chỉ lấy những cột thực sự tồn tại để tránh KeyError
-                actual_cols = [c for c in target_cols if c in df_view.columns]
-                
-                # Sắp xếp theo ngày (dùng cột gốc confirmed_date để chuẩn xác nhất)
-                df_display = df_view[actual_cols].sort_values(
-                    by='confirmed_date' if 'confirmed_date' in df_view.columns else actual_cols[0], 
-                    ascending=False
-                )
-                
-                # Hiển thị lên màn hình
+                # 4. HIỂN THỊ
                 st.dataframe(
-                    df_display, 
+                    df_sorted[display_cols], 
                     use_container_width=True, 
                     hide_index=True
                 )
