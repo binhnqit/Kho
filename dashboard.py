@@ -20,44 +20,21 @@ except Exception as e:
 # --- 2. HÀM XỬ LÝ DỮ LIỆU (DATABASE SIDE) ---
 
 @st.cache_data(ttl=60) # Cache trong 1 phút để tối ưu tốc độ
-def load_data_from_db():
-    try:
-        res = supabase.table("repair_cases").select(
-            "*, machines(machine_code, machine_type), repair_costs(estimated_cost, actual_cost, confirmed_by)"
-        ).execute()
-        
-        if not res.data:
-            return pd.DataFrame()
-            
-        df = pd.json_normalize(res.data)
-        
-        # Mapping cột cho đồng bộ
-        mapping = {
-            "machines.machine_code": "MÃ_MÁY",
-            "repair_costs.actual_cost": "CHI_PHÍ_THỰC",
-            "branch": "VÙNG"
-        }
-        df = df.rename(columns={k: v for k, v in mapping.items() if k in df.columns})
-
-        # --- BIỆN PHÁP MẠNH VỚI NGÀY THÁNG ---
-        if 'confirmed_date' in df.columns:
-            # 1. Ép về datetime (Bỏ qua lỗi)
-            df['confirmed_date'] = pd.to_datetime(df['confirmed_date'], errors='coerce')
-            
-            # 2. Loại bỏ các dòng rác không có ngày
-            df = df.dropna(subset=['confirmed_date'])
-            
-            # 3. Tạo cột Năm/Tháng kiểu INT để Filter Sidebar hoạt động chuẩn
-            df['NĂM'] = df['confirmed_date'].dt.year.astype(int)
-            df['THÁNG'] = df['confirmed_date'].dt.month.astype(int)
-            
-            # 4. QUAN TRỌNG: Tạo cột hiển thị dạng DD/MM/YYYY (Bỏ hẳn phần giờ)
-            df['NGÀY_XÁC_NHẬN'] = df['confirmed_date'].dt.strftime('%d/%m/%Y')
-        
-        return df.fillna(0)
-    except Exception as e:
-        st.error(f"Lỗi hệ thống: {e}")
-        return pd.DataFrame()
+KeyError: This app has encountered an error. The original error message is redacted to prevent data leaks. Full error details have been recorded in the logs (if you're on Streamlit Cloud, click on 'Manage app' in the lower right of your app).
+Traceback:
+File "/home/adminuser/venv/lib/python3.13/site-packages/streamlit/runtime/scriptrunner/script_runner.py", line 535, in _run_script
+    exec(code, module.__dict__)
+    ~~~~^^^^^^^^^^^^^^^^^^^^^^^
+File "/mount/src/kho/dashboard.py", line 288, in <module>
+    main()
+    ~~~~^^
+File "/mount/src/kho/dashboard.py", line 235, in main
+    total_actual = df_view['CHI_PHÍ_THỰC'].sum()
+                   ~~~~~~~^^^^^^^^^^^^^^^^
+File "/home/adminuser/venv/lib/python3.13/site-packages/pandas/core/frame.py", line 4113, in __getitem__
+    indexer = self.columns.get_loc(key)
+File "/home/adminuser/venv/lib/python3.13/site-packages/pandas/core/indexes/base.py", line 3819, in get_loc
+    raise KeyError(key) from err
 
 def import_to_enterprise_schema(df):
     success_count = 0
@@ -201,27 +178,22 @@ def main():
     with tabs[0]:
         df_db = load_data_from_db()
         
-        if not df_db.empty:
-            # 1. Lọc theo Năm/Tháng
+        if df_db.empty:
+            st.info("Chưa có dữ liệu sự vụ.")
+        else:
+            # Lọc dữ liệu
             df_view = df_db[df_db['NĂM'] == sel_year]
             if sel_month != "Tất cả":
                 df_view = df_view[df_view['THÁNG'] == sel_month]
             
-            if not df_view.empty:
-                # ... (Giữ nguyên phần KPI và Biểu đồ bên trên) ...
-
-                st.subheader(f"📋 CHI TIẾT SỰ VỤ {sel_month}/{sel_year}")
-                
-                # 2. SẮP XẾP TRƯỚC (Sắp xếp trên df_view gốc để chắc chắn có cột confirmed_date)
-                if 'confirmed_date' in df_view.columns:
-                    df_sorted = df_view.sort_values(by='confirmed_date', ascending=False)
-                else:
-                    df_sorted = df_view.copy() # Nếu không có ngày thì giữ nguyên
-
-                # 3. CHỌN CỘT HIỂN THỊ SAU
-                target_cols = ['MÃ_MÁY', 'customer_name', 'issue_reason', 'VÙNG', 'NGÀY_XÁC_NHẬN', 'CHI_PHÍ_THỰC']
-                # Chỉ lấy những cột thực sự có trong DataFrame sau khi đã rename
-                display_cols = [c for c in target_cols if c in df_sorted.columns]
+            # TÍNH TOÁN AN TOÀN
+            # Sử dụng .get() hoặc kiểm tra cột trước khi sum
+            total_actual = df_view['CHI_PHÍ_THỰC'].sum() if 'CHI_PHÍ_THỰC' in df_view.columns else 0
+            
+            # Hiển thị Metric
+            st.metric("TỔNG CHI PHÍ THỰC", f"{total_actual:,.0f} đ")
+            
+            # ... (Các phần vẽ biểu đồ và bảng hiển thị đã fix ở câu trước) ...
                 
                 # 4. HIỂN THỊ
                 st.dataframe(
