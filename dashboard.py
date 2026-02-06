@@ -8,7 +8,7 @@ from supabase import create_client
 st.set_page_config(page_title="4ORANGES - REPAIR OPS", layout="wide", page_icon="🎨")
 ORANGE_COLORS = ["#FF8C00", "#FFA500", "#FF4500", "#E67E22", "#D35400"]
 
-# Thông tin kết nối (Sử dụng Key pro cung cấp)
+# Thông tin kết nối
 SUPABASE_URL = "https://cigbnbaanpebwrufzxfg.supabase.co"
 SUPABASE_KEY = st.secrets.get("SUPABASE_KEY", "sb_publishable_NQzqwJ4YhKC4sQGLxyLAyw_mwRFhkRf")
 
@@ -17,244 +17,173 @@ try:
 except Exception as e:
     st.error(f"Lỗi kết nối Supabase: {e}")
 
-# --- 2. HÀM XỬ LÝ DỮ LIỆU (DATABASE SIDE) ---
+# --- 2. HÀM LOAD DỮ LIỆU (PHÒNG THỦ TẦNG TẦNG LỚP LỚP) ---
+@st.cache_data(ttl=60)
+def load_data_from_db():
+    try:
+        # Lấy dữ liệu JOIN từ 3 bảng chính
+        res = supabase.table("repair_cases").select(
+            "*, machines(machine_code, region), repair_costs(estimated_cost, actual_cost, confirmed_by)"
+        ).execute()
+        
+        if not res.data:
+            return pd.DataFrame()
+            
+        df = pd.json_normalize(res.data)
+        
+        # Mapping cột để thống nhất logic hiển thị
+        mapping = {
+            "machines.machine_code": "MÃ_MÁY",
+            "repair_costs.actual_cost": "CHI_PHÍ_THỰC",
+            "repair_costs.estimated_cost": "CHI_PHÍ_DỰ_KIẾN",
+            "branch": "VÙNG"
+        }
+        df = df.rename(columns={k: v for k, v in mapping.items() if k in df.columns})
 
-@st.cache_data(ttl=60) # Cache trong 1 phút để tối ưu tốc độ
-KeyError: This app has encountered an error. The original error message is redacted to prevent data leaks. Full error details have been recorded in the logs (if you're on Streamlit Cloud, click on 'Manage app' in the lower right of your app).
-Traceback:
-File "/home/adminuser/venv/lib/python3.13/site-packages/streamlit/runtime/scriptrunner/script_runner.py", line 535, in _run_script
-    exec(code, module.__dict__)
-    ~~~~^^^^^^^^^^^^^^^^^^^^^^^
-File "/mount/src/kho/dashboard.py", line 288, in <module>
-    main()
-    ~~~~^^
-File "/mount/src/kho/dashboard.py", line 235, in main
-    total_actual = df_view['CHI_PHÍ_THỰC'].sum()
-                   ~~~~~~~^^^^^^^^^^^^^^^^
-File "/home/adminuser/venv/lib/python3.13/site-packages/pandas/core/frame.py", line 4113, in __getitem__
-    indexer = self.columns.get_loc(key)
-File "/home/adminuser/venv/lib/python3.13/site-packages/pandas/core/indexes/base.py", line 3819, in get_loc
-    raise KeyError(key) from err
+        # BIỆN PHÁP MẠNH: Tự tạo cột nếu thiếu để tránh lỗi KeyError
+        REQUIRED = ['CHI_PHÍ_THỰC', 'CHI_PHÍ_DỰ_KIẾN', 'MÃ_MÁY', 'VÙNG', 'confirmed_date', 'customer_name', 'issue_reason', 'is_unrepairable']
+        for col in REQUIRED:
+            if col not in df.columns:
+                df[col] = 0 if 'CHI_PHÍ' in col or 'is_unrepairable' in col else "N/A"
 
+        # Xử lý ngày tháng chuyên sâu (Dứt điểm lỗi 00:00:00)
+        if 'confirmed_date' in df.columns:
+            df['confirmed_date'] = pd.to_datetime(df['confirmed_date'], errors='coerce')
+            df = df.dropna(subset=['confirmed_date'])
+            df['NĂM'] = df['confirmed_date'].dt.year.astype(int)
+            df['THÁNG'] = df['confirmed_date'].dt.month.astype(int)
+            df['NGÀY_HIỂN_THỊ'] = df['confirmed_date'].dt.strftime('%d/%m/%Y')
+
+        # Ép kiểu số cho tiền bạc
+        df['CHI_PHÍ_THỰC'] = pd.to_numeric(df['CHI_PHÍ_THỰC'], errors='coerce').fillna(0)
+        
+        return df
+    except Exception as e:
+        st.error(f"Lỗi Load Data: {e}")
+        return pd.DataFrame()
+
+# --- 3. HÀM IMPORT DỮ LIỆU (ALL-IN-ONE) ---
 def import_to_enterprise_schema(df):
     success_count = 0
     progress_bar = st.progress(0)
     
-    # Hàm hỗ trợ làm sạch giá tiền
     def clean_price(val):
         try:
             if not val or pd.isna(val): return 0
             return float(str(val).replace(',', ''))
-        except:
-            return 0
+        except: return 0
 
     for i, r in df.iterrows():
         m_code = str(r.get("Mã số máy", "")).strip()
         if not m_code: continue
         
         try:
-            # --- BƯỚC 1: UPSERT MACHINE ---
+            # 1. UPSERT Machine
             m_res = supabase.table("machines").upsert({
                 "machine_code": m_code,
                 "region": str(r.get("Chi Nhánh", "Miền Bắc"))
             }, on_conflict="machine_code").execute()
             machine_id = m_res.data[0]["id"]
 
-            # --- BƯỚC 2: CHUẨN HÓA NGÀY THÁNG & TẠO CASE ---
-            confirmed_val = str(r.get("Ngày Xác nhận", "")).strip()
-            formatted_date = None
-            
-            if confirmed_val and confirmed_val.lower() != "nan":
-                try:
-                    # Ép định dạng dd/mm/yyyy sang yyyy-mm-dd để Postgres không báo lỗi
-                    formatted_date = pd.to_datetime(confirmed_val, dayfirst=True).strftime('%Y-%m-%d')
-                except:
-                    formatted_date = None
+            # 2. Case
+            c_val = str(r.get("Ngày Xác nhận", "")).strip()
+            f_date = pd.to_datetime(c_val, dayfirst=True).strftime('%Y-%m-%d') if c_val else None
 
             case_payload = {
                 "machine_id": machine_id,
                 "branch": str(r.get("Chi Nhánh", "Miền Bắc")),
                 "customer_name": str(r.get("Tên KH", "")),
                 "issue_reason": str(r.get("Lý Do", "")),
-                "note": str(r.get("Ghi Chú", "")),
-                "confirmed_date": formatted_date,
-                "is_unrepairable": False
+                "confirmed_date": f_date
             }
             c_res = supabase.table("repair_cases").insert(case_payload).execute()
             case_id = c_res.data[0]["id"]
 
-            # --- BƯỚC 3: ĐẨY CHI PHÍ ---
-            actual_cost = clean_price(r.get("Chi Phí Thực Tế", 0))
-            cost_payload = {
+            # 3. Cost
+            actual = clean_price(r.get("Chi Phí Thực Tế", 0))
+            supabase.table("repair_costs").insert({
                 "repair_case_id": case_id,
                 "estimated_cost": clean_price(r.get("Chi Phí Dự Kiến", 0)),
-                "actual_cost": actual_cost,
+                "actual_cost": actual,
                 "confirmed_by": str(r.get("Người Kiểm Tra", ""))
-            }
-            supabase.table("repair_costs").insert(cost_payload).execute()
+            }).execute()
 
-            # --- BƯỚC 4: KHỞI TẠO QUY TRÌNH (FIX LỖI ENUM) ---
-            # Lưu ý: Nếu DB báo lỗi Enum, sếp hãy chạy SQL ALTER TABLE đã gửi ở trên
-            state_value = "DONE" if actual_cost > 0 else "PENDING"
-            
-            process_payload = {
+            # 4. Process
+            supabase.table("repair_process").insert({
                 "repair_case_id": case_id,
-                "state": state_value,
-                "handled_by": str(r.get("Người Kiểm Tra", "")),
-                "started_at": formatted_date if formatted_date else None
-            }
-            supabase.table("repair_process").insert(process_payload).execute()
+                "state": "DONE" if actual > 0 else "PENDING",
+                "handled_by": str(r.get("Người Kiểm Tra", ""))
+            }).execute()
 
             success_count += 1
-            
         except Exception as e:
-            st.error(f"❌ Lỗi tại dòng mã máy {m_code}: {str(e)}")
-        
-        # Cập nhật thanh tiến trình
+            st.error(f"Lỗi mã {m_code}: {e}")
         progress_bar.progress((i + 1) / len(df))
-            
     return success_count
-def load_enterprise_data(sel_year, sel_month):
-    # Lấy dữ liệu kết hợp trạng thái sửa chữa
-    res = supabase.table("machines").select("*").execute()
-    df = pd.DataFrame(res.data)
-    
-    if df.empty: return df
 
-    # Xử lý thời gian
-    df['NGÀY_NHẬP'] = pd.to_datetime(df['created_at'])
-    df['NĂM'] = df['NGÀY_NHẬP'].dt.year
-    df['THÁNG'] = df['NGÀY_NHẬP'].dt.month
-    
-    # Filter theo thời gian
-    df_filtered = df[df['NĂM'] == sel_year]
-    if sel_month != "Tất cả":
-        df_filtered = df_filtered[df_filtered['THÁNG'] == sel_month]
-        
-    return df_filtered
-# --- 3. GIAO DIỆN CHÍNH ---
-
+# --- 4. GIAO DIỆN CHÍNH ---
 def main():
-    # --- SIDEBAR LOGIC ---
+    # SIDEBAR
     with st.sidebar:
-        st.image("https://upload.wikimedia.org/wikipedia/commons/d/d0/Logo_4Oranges.png", width=150) # Tùy chọn logo sếp nhé
+        st.image("https://upload.wikimedia.org/wikipedia/commons/d/d0/Logo_4Oranges.png", width=150)
         st.title("🎨 4ORANGES OPS")
-        
         if st.button('🔄 REFRESH DATABASE', type="primary", use_container_width=True):
             st.cache_data.clear()
             st.rerun()
 
-        st.divider()
-
-        # Load dữ liệu để lấy danh sách Năm
         df_db = load_data_from_db()
-        
         current_year = datetime.datetime.now().year
         
-        if not df_db.empty and 'NĂM' in df_db.columns:
-            # Lấy danh sách năm duy nhất, lọc bỏ giá trị 0 hoặc NaN
-            list_years = sorted([int(y) for y in df_db['NĂM'].unique() if y > 0], reverse=True)
-            if not list_years:
-                list_years = [current_year]
-        else:
-            list_years = [current_year]
-
-        # Fix lỗi "No results": Luôn có ít nhất năm hiện tại
-        sel_year = st.selectbox("📅 Chọn Năm", list_years, index=0)
+        list_years = sorted(df_db['NĂM'].unique().tolist(), reverse=True) if not df_db.empty else [current_year]
+        sel_year = st.selectbox("📅 Chọn Năm", list_years)
         
-        # Logic chọn Tháng tương tự
-        if not df_db.empty and 'THÁNG' in df_db.columns:
-            list_months = sorted([int(m) for m in df_db[df_db['NĂM'] == sel_year]['THÁNG'].unique() if m > 0])
-            sel_month = st.selectbox("📆 Chọn Tháng", ["Tất cả"] + list_months)
-        else:
-            sel_month = st.selectbox("📆 Chọn Tháng", ["Tất cả"])
+        list_months = ["Tất cả"] + sorted(df_db[df_db['NĂM'] == sel_year]['THÁNG'].unique().tolist()) if not df_db.empty else ["Tất cả"]
+        sel_month = st.selectbox("📆 Chọn Tháng", list_months)
 
-    # Tabs chức năng
-    # --- TABS DEFINITION ---
-    # --- TABS DEFINITION ---
-    tabs = st.tabs(["📊 XU HƯỚNG", "💰 CHI PHÍ", "🩺 SỨC KHỎE", "📦 KHO", "🧠 AI", "📥 NHẬP DỮ LIỆU"])
+    tabs = st.tabs(["📊 XU HƯỚNG", "💰 CHI PHÍ", "📥 NHẬP DỮ LIỆU"])
 
-    # --- Tab Xu hướng ---
     with tabs[0]:
-        df_db = load_data_from_db()
-        
         if df_db.empty:
-            st.info("Chưa có dữ liệu sự vụ.")
+            st.info("Chưa có dữ liệu.")
         else:
-            # Lọc dữ liệu
             df_view = df_db[df_db['NĂM'] == sel_year]
             if sel_month != "Tất cả":
                 df_view = df_view[df_view['THÁNG'] == sel_month]
             
-            # TÍNH TOÁN AN TOÀN
-            # Sử dụng .get() hoặc kiểm tra cột trước khi sum
-            total_actual = df_view['CHI_PHÍ_THỰC'].sum() if 'CHI_PHÍ_THỰC' in df_view.columns else 0
-            
-            # Hiển thị Metric
-            st.metric("TỔNG CHI PHÍ THỰC", f"{total_actual:,.0f} đ")
-            
-            # ... (Các phần vẽ biểu đồ và bảng hiển thị đã fix ở câu trước) ...
-                
-                # 4. HIỂN THỊ
-                st.dataframe(
-                    df_sorted[display_cols], 
-                    use_container_width=True, 
-                    hide_index=True
-                )
+            if not df_view.empty:
+                k1, k2, k3 = st.columns(3)
+                k1.metric("TỔNG CHI PHÍ", f"{df_view['CHI_PHÍ_THỰC'].sum():,.0f} đ")
+                k2.metric("TỔNG SỰ VỤ", f"{len(df_view)} ca")
+                k3.metric("TB CHI PHÍ", f"{df_view['CHI_PHÍ_THỰC'].mean():,.0f} đ")
 
-                # --- 4 KPI CHIẾN LƯỢC ---
-                k1, k2, k3, k4 = st.columns(4)
-                total_actual = df_view['CHI_PHÍ_THỰC'].sum()
-                avg_cost = df_view['CHI_PHÍ_THỰC'].mean()
-                unrepairable = df_view['is_unrepairable'].sum()
-                
-                k1.metric("TỔNG CHI PHÍ THỰC", f"{total_actual:,.0f} đ")
-                k2.metric("TRUNG BÌNH/CA", f"{avg_cost:,.0f} đ")
-                k3.metric("KHÔNG SỬA ĐƯỢC", f"{unrepairable} ca", delta_color="inverse")
-                k4.metric("TỔNG SỰ VỤ", f"{len(df_view)} ca")
-
-                st.divider()
-
-                # --- BIỂU ĐỒ NÓI CHUYỆN ---
+                # Biểu đồ
                 c1, c2 = st.columns(2)
                 with c1:
-                    # Xu hướng lỗi (Lấy từ cột issue_reason)
-                    issue_counts = df_view['issue_reason'].value_counts().reset_index()
-                    issue_counts.columns = ['Lý do', 'Số lượng']
-                    fig_issue = px.bar(issue_counts.head(10), x='Số lượng', y='Lý do', 
-                                       orientation='h', title="TOP 10 LÝ DO HỎNG PHỔ BIẾN",
-                                       color_discrete_sequence=[ORANGE_COLORS[0]])
+                    fig_issue = px.bar(df_view['issue_reason'].value_counts().reset_index().head(10), 
+                                      x='count', y='issue_reason', orientation='h', title="LÝ DO PHỔ BIẾN",
+                                      color_discrete_sequence=[ORANGE_COLORS[0]])
                     st.plotly_chart(fig_issue, use_container_width=True)
-
                 with c2:
-                    # Cơ cấu chi phí theo chi nhánh
-                    branch_stats = df_view.groupby('VÙNG')['CHI_PHÍ_THỰC'].sum().reset_index()
-                    fig_pie = px.pie(branch_stats, names='VÙNG', values='CHI_PHÍ_THỰC', 
-                                     title="CƠ CẤU CHI PHÍ THEO VÙNG", hole=0.4,
-                                     color_discrete_sequence=ORANGE_COLORS)
+                    fig_pie = px.pie(df_view, names='VÙNG', values='CHI_PHÍ_THỰC', title="CHI PHÍ THEO VÙNG", hole=0.4)
                     st.plotly_chart(fig_pie, use_container_width=True)
 
-                # --- BẢNG CHI TIẾT (GIỐNG GOOGLE SHEET) ---
                 st.subheader("📋 DANH SÁCH CHI TIẾT")
-                cols_to_show = ['MÃ_MÁY', 'customer_name', 'issue_reason', 'VÙNG', 'confirmed_date', 'CHI_PHÍ_THỰC']
-                st.dataframe(df_view[cols_to_show].sort_values('confirmed_date', ascending=False), use_container_width=True)
-    with tabs[5]:
-        st.subheader("📥 CỔNG ĐỒNG BỘ DỮ LIỆU GOOGLE SHEET")
-        st.info("Hệ thống sẽ tự động phân bổ dữ liệu vào 4 bảng: Machines, Cases, Costs và Process.")
-        
-        uploaded_file = st.file_uploader("Upload File CSV từ Google Sheet", type=["csv"])
-        
-        if uploaded_file:
-            df_upload = pd.read_csv(uploaded_file).fillna("")
-            st.dataframe(df_upload.head(3), use_container_width=True)
-            
-            if st.button("🚀 BẮT ĐẦU ĐỒNG BỘ MULTI-TABLE", type="primary"):
-                with st.spinner("Đang thực hiện cấu trúc lại dữ liệu..."):
-                    count = import_to_enterprise_schema(df_upload)
+                display_cols = ['MÃ_MÁY', 'customer_name', 'issue_reason', 'VÙNG', 'NGÀY_HIỂN_THỊ', 'CHI_PHÍ_THỰC']
+                st.dataframe(df_view[display_cols].sort_values('confirmed_date', ascending=False), 
+                             use_container_width=True, hide_index=True)
+
+    with tabs[2]:
+        st.subheader("📥 NHẬP DỮ LIỆU GOOGLE SHEET")
+        up = st.file_uploader("Chọn file CSV", type="csv")
+        if up:
+            df_up = pd.read_csv(up).fillna("")
+            if st.button("🚀 ĐỒNG BỘ NGAY"):
+                with st.spinner("Đang xử lý..."):
+                    count = import_to_enterprise_schema(df_up)
                     if count > 0:
                         st.balloons()
-                        st.success(f"Đã đồng bộ thành công {count} sự vụ vào hệ thống!")
-                        st.cache_data.clear() # Xóa cache để tab Xu hướng cập nhật ngay
+                        st.success(f"Thành công {count} ca!")
+                        st.cache_data.clear()
 
 if __name__ == "__main__":
     main()
