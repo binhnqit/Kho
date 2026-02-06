@@ -22,7 +22,6 @@ except Exception as e:
 @st.cache_data(ttl=60) # Cache trong 1 phút để tối ưu tốc độ
 def load_data_from_db():
     try:
-        # Truy vấn lấy Case + Machine + Costs
         res = supabase.table("repair_cases").select(
             "*, machines(machine_code, machine_type), repair_costs(estimated_cost, actual_cost, confirmed_by)"
         ).execute()
@@ -32,38 +31,32 @@ def load_data_from_db():
             
         df = pd.json_normalize(res.data)
         
-        # MAPPING CỘT - Đảm bảo tên cột khớp tuyệt đối với tab Xu hướng
+        # Mapping cột cho đồng bộ
         mapping = {
             "machines.machine_code": "MÃ_MÁY",
-            "machines.machine_type": "LOẠI_MÁY",
             "repair_costs.actual_cost": "CHI_PHÍ_THỰC",
-            "repair_costs.estimated_cost": "CHI_PHÍ_DỰ_KIẾN",
-            "repair_costs.confirmed_by": "NGƯỜI_KIỂM_TRA",
             "branch": "VÙNG"
         }
-        
-        # Chỉ đổi tên những cột thực sự tồn tại trong dữ liệu trả về
-        existing_mapping = {k: v for k, v in mapping.items() if k in df.columns}
-        df = df.rename(columns=existing_mapping)
-        
-        # CỦNG CỐ DỮ LIỆU: Nếu thiếu cột do DB trống, tự tạo cột đó với giá trị 0/Rỗng
-        expected_cols = ["CHI_PHÍ_THỰC", "CHI_PHÍ_DỰ_KIẾN", "MÃ_MÁY", "VÙNG", "is_unrepairable", "issue_reason"]
-        for col in expected_cols:
-            if col not in df.columns:
-                df[col] = 0 if "CHI_PHÍ" in col else "Chưa xác định"
+        df = df.rename(columns={k: v for k, v in mapping.items() if k in df.columns})
 
-        # Xử lý thời gian
-        if 'confirmed_date' in df.columns and df['confirmed_date'].notnull().any():
-            df['confirmed_date'] = pd.to_datetime(df['confirmed_date'])
-            df['NĂM'] = df['confirmed_date'].dt.year
-            df['THÁNG'] = df['confirmed_date'].dt.month
-        else:
-            df['NĂM'] = datetime.datetime.now().year
-            df['THÁNG'] = datetime.datetime.now().month
-
-        return df.fillna(0) # Thay thế các giá trị NaN bằng 0 để tránh lỗi tính toán sum()
+        # --- BIỆN PHÁP MẠNH VỚI NGÀY THÁNG ---
+        if 'confirmed_date' in df.columns:
+            # 1. Ép về datetime (Bỏ qua lỗi)
+            df['confirmed_date'] = pd.to_datetime(df['confirmed_date'], errors='coerce')
+            
+            # 2. Loại bỏ các dòng rác không có ngày
+            df = df.dropna(subset=['confirmed_date'])
+            
+            # 3. Tạo cột Năm/Tháng kiểu INT để Filter Sidebar hoạt động chuẩn
+            df['NĂM'] = df['confirmed_date'].dt.year.astype(int)
+            df['THÁNG'] = df['confirmed_date'].dt.month.astype(int)
+            
+            # 4. QUAN TRỌNG: Tạo cột hiển thị dạng DD/MM/YYYY (Bỏ hẳn phần giờ)
+            df['NGÀY_XÁC_NHẬN'] = df['confirmed_date'].dt.strftime('%d/%m/%Y')
+        
+        return df.fillna(0)
     except Exception as e:
-        st.error(f"Lỗi Load Data: {e}")
+        st.error(f"Lỗi hệ thống: {e}")
         return pd.DataFrame()
 
 def import_to_enterprise_schema(df):
@@ -206,21 +199,26 @@ def main():
 
     # --- Tab Xu hướng ---
     with tabs[0]:
-        # Gọi hàm đã sửa tên ở trên
         df_db = load_data_from_db()
         
-        if df_db.empty:
-            st.info("👋 Chào sếp! Hiện tại chưa có dữ liệu sự vụ sửa chữa nào.")
-        else:
-            # Bộ lọc theo Năm/Tháng từ Sidebar
+        if not df_db.empty:
+            # Lọc theo Sidebar
             df_view = df_db[df_db['NĂM'] == sel_year]
             if sel_month != "Tất cả":
                 df_view = df_view[df_view['THÁNG'] == sel_month]
+            
+            if not df_view.empty:
+                # ... (KPI và Biểu đồ giữ nguyên) ...
 
-            if df_view.empty:
-                st.warning(f"Không có dữ liệu trong tháng {sel_month}/{sel_year}")
-            else:
-                st.subheader(f"📊 PHÂN TÍCH XU HƯỚNG {sel_month}/{sel_year}")
+                st.subheader("📋 DANH SÁCH CHI TIẾT (ĐÃ CHUẨN HÓA)")
+                
+                # Chỉ hiển thị cột Ngày đã được định dạng sạch sẽ
+                show_cols = ['MÃ_MÁY', 'customer_name', 'issue_reason', 'VÙNG', 'NGÀY_XÁC_NHẬN', 'CHI_PHÍ_THỰC']
+                
+                # Sắp xếp theo ngày mới nhất lên đầu
+                df_display = df_view[show_cols].sort_values('NGÀY_XÁC_NHẬN', ascending=False)
+                
+                st.dataframe(df_display, use_container_width=True, hide_index=True)
 
                 # --- 4 KPI CHIẾN LƯỢC ---
                 k1, k2, k3, k4 = st.columns(4)
