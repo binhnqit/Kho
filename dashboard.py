@@ -120,58 +120,60 @@ def main():
     # --- TABS DEFINITION ---
     tabs = st.tabs(["📊 XU HƯỚNG", "💰 CHI PHÍ", "🩺 SỨC KHỎE", "📦 KHO", "🧠 AI", "📥 NHẬP DỮ LIỆU"])
 
+    # --- Tab Xu hướng ---
     with tabs[0]:
-        # Dòng 120: Đã thụt lề chuẩn 4 khoảng trắng
-        df_main = load_enterprise_dashboard_data()
+        # Gọi hàm đã sửa tên ở trên
+        df_db = load_data_from_db()
         
-        if df_main.empty:
-            st.info("👋 Chào sếp! Hiện tại chưa có dữ liệu sự vụ sửa chữa nào được ghi nhận.")
+        if df_db.empty:
+            st.info("👋 Chào sếp! Hiện tại chưa có dữ liệu sự vụ sửa chữa nào.")
         else:
-            # Lọc theo Sidebar (Năm/Tháng)
-            df_view = df_main[df_main['NĂM'] == sel_year]
+            # Bộ lọc theo Năm/Tháng từ Sidebar
+            df_view = df_db[df_db['NĂM'] == sel_year]
             if sel_month != "Tất cả":
                 df_view = df_view[df_view['THÁNG'] == sel_month]
 
-            st.subheader(f"📊 PHÂN TÍCH XU HƯỚNG SỬA CHỮA {sel_month}/{sel_year}")
+            if df_view.empty:
+                st.warning(f"Không có dữ liệu trong tháng {sel_month}/{sel_year}")
+            else:
+                st.subheader(f"📊 PHÂN TÍCH XU HƯỚNG {sel_month}/{sel_year}")
 
-            # --- KPI BLOCK ---
-            m1, m2, m3, m4 = st.columns(4)
-            total_actual = df_view['CHI_PHÍ_THỰC'].sum()
-            avg_cost = df_view['CHI_PHÍ_THỰC'].mean()
-            unrepairable = df_view['is_unrepairable'].sum()
-            
-            m1.metric("TỔNG CHI PHÍ THỰC", f"{total_actual:,.0f} đ")
-            m2.metric("TRUNG BÌNH/CA", f"{avg_cost:,.0f} đ")
-            m3.metric("CA KHÔNG SỬA ĐƯỢC", f"{unrepairable} ca", delta="Rủi ro", delta_color="inverse")
-            m4.metric("TỔNG SỰ VỤ", f"{len(df_view)} ca")
+                # --- 4 KPI CHIẾN LƯỢC ---
+                k1, k2, k3, k4 = st.columns(4)
+                total_actual = df_view['CHI_PHÍ_THỰC'].sum()
+                avg_cost = df_view['CHI_PHÍ_THỰC'].mean()
+                unrepairable = df_view['is_unrepairable'].sum()
+                
+                k1.metric("TỔNG CHI PHÍ THỰC", f"{total_actual:,.0f} đ")
+                k2.metric("TRUNG BÌNH/CA", f"{avg_cost:,.0f} đ")
+                k3.metric("KHÔNG SỬA ĐƯỢC", f"{unrepairable} ca", delta_color="inverse")
+                k4.metric("TỔNG SỰ VỤ", f"{len(df_view)} ca")
 
-            st.divider()
+                st.divider()
 
-            # --- VISUALIZATION BLOCK ---
-            col1, col2 = st.columns(2)
-            
-            with col1:
-                # Top lý do hỏng - Đây là cái sếp cần để quản trị chất lượng
-                issue_data = df_view['issue_reason'].value_counts().reset_index()
-                issue_data.columns = ['Lý do', 'Số lượng']
-                fig_issue = px.bar(issue_data.head(10), x='Số lượng', y='Lý do', 
-                                   orientation='h', title="TOP 10 LÝ DO HỎNG PHỔ BIẾN",
-                                   color='Số lượng', color_continuous_scale='Oranges')
-                st.plotly_chart(fig_issue, use_container_width=True)
+                # --- BIỂU ĐỒ NÓI CHUYỆN ---
+                c1, c2 = st.columns(2)
+                with c1:
+                    # Xu hướng lỗi (Lấy từ cột issue_reason)
+                    issue_counts = df_view['issue_reason'].value_counts().reset_index()
+                    issue_counts.columns = ['Lý do', 'Số lượng']
+                    fig_issue = px.bar(issue_counts.head(10), x='Số lượng', y='Lý do', 
+                                       orientation='h', title="TOP 10 LÝ DO HỎNG PHỔ BIẾN",
+                                       color_discrete_sequence=[ORANGE_COLORS[0]])
+                    st.plotly_chart(fig_issue, use_container_width=True)
 
-            with col2:
-                # So sánh Dự kiến vs Thực tế theo Chi nhánh
-                cost_compare = df_view.groupby('branch')[['CHI_PHÍ_DỰ_KIẾN', 'CHI_PHÍ_THỰC']].sum().reset_index()
-                fig_cost = px.bar(cost_compare, x='branch', y=['CHI_PHÍ_DỰ_KIẾN', 'CHI_PHÍ_THỰC'],
-                                  barmode='group', title="SO SÁNH CHI PHÍ THEO CHI NHÁNH",
-                                  color_discrete_sequence=["#BDC3C7", "#FF8C00"])
-                st.plotly_chart(fig_cost, use_container_width=True)
+                with c2:
+                    # Cơ cấu chi phí theo chi nhánh
+                    branch_stats = df_view.groupby('VÙNG')['CHI_PHÍ_THỰC'].sum().reset_index()
+                    fig_pie = px.pie(branch_stats, names='VÙNG', values='CHI_PHÍ_THỰC', 
+                                     title="CƠ CẤU CHI PHÍ THEO VÙNG", hole=0.4,
+                                     color_discrete_sequence=ORANGE_COLORS)
+                    st.plotly_chart(fig_pie, use_container_width=True)
 
-            # --- BẢNG CHI TIẾT THEO FILE GOOGLE SHEET ---
-            st.subheader("📋 CHI TIẾT CÁC CA SỬA CHỮA TRONG KỲ")
-            display_cols = ['MÃ_MÁY', 'customer_name', 'issue_reason', 'branch', 'confirmed_date', 'CHI_PHÍ_THỰC', 'NGƯỜI_KIỂM_TRA']
-            st.dataframe(df_view[display_cols].sort_values('confirmed_date', ascending=False), use_container_width=True)
-    # --- TAB 5: NHẬP DỮ LIỆU (HỖ TRỢ MB & ĐN) ---
+                # --- BẢNG CHI TIẾT (GIỐNG GOOGLE SHEET) ---
+                st.subheader("📋 DANH SÁCH CHI TIẾT")
+                cols_to_show = ['MÃ_MÁY', 'customer_name', 'issue_reason', 'VÙNG', 'confirmed_date', 'CHI_PHÍ_THỰC']
+                st.dataframe(df_view[cols_to_show].sort_values('confirmed_date', ascending=False), use_container_width=True)
     with tabs[5]:
         st.subheader("📥 CỔNG NHẬP DỮ LIỆU ĐA PHÂN CÔNG")
         st.write("Hệ thống tự động nhận diện mẫu file Miền Bắc và Đà Nẵng qua các cột chung.")
