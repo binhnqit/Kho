@@ -70,75 +70,79 @@ def import_to_enterprise_schema(df):
     success_count = 0
     progress_bar = st.progress(0)
     
-    for i, r in df.iterrows():
+    # Hàm hỗ trợ làm sạch giá tiền
+    def clean_price(val):
         try:
-            m_code = str(r["Mã số máy"]).strip()
-            
-            # BƯỚC 1: Đảm bảo máy tồn tại trong bảng 'machines'
-            # Lấy hoặc tạo mới máy để có ID liên kết
+            if not val or pd.isna(val): return 0
+            return float(str(val).replace(',', ''))
+        except:
+            return 0
+
+    for i, r in df.iterrows():
+        m_code = str(r.get("Mã số máy", "")).strip()
+        if not m_code: continue
+        
+        try:
+            # --- BƯỚC 1: UPSERT MACHINE ---
             m_res = supabase.table("machines").upsert({
                 "machine_code": m_code,
-                "region": str(r["Chi Nhánh"])
+                "region": str(r.get("Chi Nhánh", "Miền Bắc"))
             }, on_conflict="machine_code").execute()
             machine_id = m_res.data[0]["id"]
 
-            # BƯỚC 2: Tạo sự vụ trong bảng 'repair_cases'
-            # Trong hàm import_to_enterprise_schema, tại Bước 2:
-            confirmed_val = str(r["Ngày Xác nhận"]).strip()
+            # --- BƯỚC 2: CHUẨN HÓA NGÀY THÁNG & TẠO CASE ---
+            confirmed_val = str(r.get("Ngày Xác nhận", "")).strip()
             formatted_date = None
-
-            if confirmed_val and confirmed_val != "nan":
+            
+            if confirmed_val and confirmed_val.lower() != "nan":
                 try:
-                # Ép kiểu dữ liệu ngày tháng theo định dạng dd/mm/yyyy từ file của sếp
-                formatted_date = pd.to_datetime(confirmed_val, dayfirst=True).strftime('%Y-%m-%d')
+                    # Ép định dạng dd/mm/yyyy sang yyyy-mm-dd để Postgres không báo lỗi
+                    formatted_date = pd.to_datetime(confirmed_val, dayfirst=True).strftime('%Y-%m-%d')
                 except:
                     formatted_date = None
 
-                    case_payload = {
-                    "machine_id": machine_id,
-                    "branch": str(r["Chi Nhánh"]),
-                    "customer_name": str(r["Tên KH"]),
-                    "issue_reason": str(r["Lý Do"]),
-                    "note": str(r["Ghi Chú"]),
-                    "confirmed_date": formatted_date, # Đã chuẩn hóa yyyy-mm-dd
-                    "is_unrepairable": False
-                        }
-                    }
-                 c_res = supabase.table("repair_cases").insert(case_payload).execute()
-                  case_id = c_res.data[0]["id"]
+            case_payload = {
+                "machine_id": machine_id,
+                "branch": str(r.get("Chi Nhánh", "Miền Bắc")),
+                "customer_name": str(r.get("Tên KH", "")),
+                "issue_reason": str(r.get("Lý Do", "")),
+                "note": str(r.get("Ghi Chú", "")),
+                "confirmed_date": formatted_date,
+                "is_unrepairable": False
+            }
+            c_res = supabase.table("repair_cases").insert(case_payload).execute()
+            case_id = c_res.data[0]["id"]
 
-            # BƯỚC 3: Đẩy chi phí vào bảng 'repair_costs'
-            # Xử lý số liệu: xóa dấu phẩy nếu có
-            def clean_price(val):
-                try: return float(str(val).replace(',', '')) if val else 0
-                except: return 0
-
+            # --- BƯỚC 3: ĐẨY CHI PHÍ ---
+            actual_cost = clean_price(r.get("Chi Phí Thực Tế", 0))
             cost_payload = {
                 "repair_case_id": case_id,
-                "estimated_cost": clean_price(r["Chi Phí Dự Kiến"]),
-                "actual_cost": clean_price(r["Chi Phí Thực Tế"]),
-                "confirmed_by": str(r["Người Kiểm Tra"])
+                "estimated_cost": clean_price(r.get("Chi Phí Dự Kiến", 0)),
+                "actual_cost": actual_cost,
+                "confirmed_by": str(r.get("Người Kiểm Tra", ""))
             }
             supabase.table("repair_costs").insert(cost_payload).execute()
 
-            # BƯỚC 4: Khởi tạo quy trình vào bảng 'repair_process'
-            # Đảm bảo giá trị 'PENDING' hoặc 'DONE' đã được định nghĩa trong Enum repair_state
-            
-            # Giả sử sếp đã thêm PENDING và DONE vào Enum như bước 1 ở trên
-            state_value = "DONE" if cost_payload["actual_cost"] > 0 else "PENDING"
+            # --- BƯỚC 4: KHỞI TẠO QUY TRÌNH (FIX LỖI ENUM) ---
+            # Lưu ý: Nếu DB báo lỗi Enum, sếp hãy chạy SQL ALTER TABLE đã gửi ở trên
+            state_value = "DONE" if actual_cost > 0 else "PENDING"
             
             process_payload = {
                 "repair_case_id": case_id,
-                "state": state_value, # Giá trị này phải khớp 100% với Enum trong DB
-                "handled_by": str(r["Người Kiểm Tra"]),
-                "started_at": pd.to_datetime(r["Ngày Xác nhận"], dayfirst=True).isoformat() if r["Ngày Xác nhận"] else None
+                "state": state_value,
+                "handled_by": str(r.get("Người Kiểm Tra", "")),
+                "started_at": formatted_date if formatted_date else None
             }
             supabase.table("repair_process").insert(process_payload).execute()
 
-        except Exception as e:
-            st.error(f"Lỗi tại dòng mã máy {m_code}: {e}")
+            success_count += 1
             
-    return success_count
+        except Exception as e:
+            st.error(f"❌ Lỗi tại dòng mã máy {m_code}: {str(e)}")
+        
+        # Cập nhật thanh tiến trình
+        progress_bar.progress((i + 1) / len(df))
+            
     return success_count
 def load_enterprise_data(sel_year, sel_month):
     # Lấy dữ liệu kết hợp trạng thái sửa chữa
