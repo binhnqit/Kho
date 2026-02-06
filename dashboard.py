@@ -208,17 +208,26 @@ def main():
                 df_view = df_view[df_view['THÁNG'] == sel_month]
             
             if not df_view.empty:
-                # ... (KPI và Biểu đồ giữ nguyên) ...
-
-                st.subheader("📋 DANH SÁCH CHI TIẾT (ĐÃ CHUẨN HÓA)")
+                st.subheader(f"📋 CHI TIẾT SỰ VỤ {sel_month}/{sel_year}")
                 
-                # Chỉ hiển thị cột Ngày đã được định dạng sạch sẽ
-                show_cols = ['MÃ_MÁY', 'customer_name', 'issue_reason', 'VÙNG', 'NGÀY_XÁC_NHẬN', 'CHI_PHÍ_THỰC']
+                # DANH SÁCH CỘT MONG MUỐN
+                target_cols = ['MÃ_MÁY', 'customer_name', 'issue_reason', 'VÙNG', 'NGÀY_XÁC_NHẬN', 'CHI_PHÍ_THỰC']
                 
-                # Sắp xếp theo ngày mới nhất lên đầu
-                df_display = df_view[show_cols].sort_values('NGÀY_XÁC_NHẬN', ascending=False)
+                # BIỆN PHÁP MẠNH: Chỉ lấy những cột thực sự tồn tại để tránh KeyError
+                actual_cols = [c for c in target_cols if c in df_view.columns]
                 
-                st.dataframe(df_display, use_container_width=True, hide_index=True)
+                # Sắp xếp theo ngày (dùng cột gốc confirmed_date để chuẩn xác nhất)
+                df_display = df_view[actual_cols].sort_values(
+                    by='confirmed_date' if 'confirmed_date' in df_view.columns else actual_cols[0], 
+                    ascending=False
+                )
+                
+                # Hiển thị lên màn hình
+                st.dataframe(
+                    df_display, 
+                    use_container_width=True, 
+                    hide_index=True
+                )
 
                 # --- 4 KPI CHIẾN LƯỢC ---
                 k1, k2, k3, k4 = st.columns(4)
