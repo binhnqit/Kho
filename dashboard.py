@@ -54,26 +54,65 @@ def load_data_from_db():
         st.error(f"Lỗi Database: {e}")
         return pd.DataFrame()
 
-def smart_import_repair_data(df):
-    """Hàm import thông minh chấp nhận cả mẫu MB và ĐN"""
+def import_to_enterprise_schema(df):
     success_count = 0
     progress_bar = st.progress(0)
     
     for i, r in df.iterrows():
         try:
-            # Lấy thông tin lõi
-            payload = {
-                "machine_code": str(r["MÃ SỐ MÁY"]).strip(),
-                "machine_type": str(r["LOẠI MÁY"]).strip(),
-                "region": str(r["KHU VỰC"]).strip(),
-                # Bạn có thể lưu thêm các cột khác vào trường 'metadata' nếu DB có cột JSONB
+            m_code = str(r["Mã số máy"]).strip()
+            
+            # BƯỚC 1: Đảm bảo máy tồn tại trong bảng 'machines'
+            # Lấy hoặc tạo mới máy để có ID liên kết
+            m_res = supabase.table("machines").upsert({
+                "machine_code": m_code,
+                "region": str(r["Chi Nhánh"])
+            }, on_conflict="machine_code").execute()
+            machine_id = m_res.data[0]["id"]
+
+            # BƯỚC 2: Tạo sự vụ trong bảng 'repair_cases'
+            case_payload = {
+                "machine_id": machine_id,
+                "branch": str(r["Chi Nhánh"]),
+                "customer_name": str(r["Tên KH"]),
+                "issue_reason": str(r["Lý Do"]),
+                "note": str(r["Ghi Chú"]),
+                "confirmed_date": pd.to_datetime(r["Ngày Xác nhận"], dayfirst=True).strftime('%Y-%m-%d') if r["Ngày Xác nhận"] else None,
+                "is_unrepairable": False # Mặc định, có thể tinh chỉnh sau
             }
-            # Upsert: Có rồi thì cập nhật, chưa có thì thêm mới
-            supabase.table("machines").upsert(payload, on_conflict="machine_code").execute()
+            c_res = supabase.table("repair_cases").insert(case_payload).execute()
+            case_id = c_res.data[0]["id"]
+
+            # BƯỚC 3: Đẩy chi phí vào bảng 'repair_costs'
+            # Xử lý số liệu: xóa dấu phẩy nếu có
+            def clean_price(val):
+                try: return float(str(val).replace(',', '')) if val else 0
+                except: return 0
+
+            cost_payload = {
+                "repair_case_id": case_id,
+                "estimated_cost": clean_price(r["Chi Phí Dự Kiến"]),
+                "actual_cost": clean_price(r["Chi Phí Thực Tế"]),
+                "confirmed_by": str(r["Người Kiểm Tra"])
+            }
+            supabase.table("repair_costs").insert(cost_payload).execute()
+
+            # BƯỚC 4: Khởi tạo quy trình vào bảng 'repair_process'
+            # Mặc định là trạng thái hoàn tất nếu đã có chi phí thực tế
+            process_payload = {
+                "repair_case_id": case_id,
+                "state": "DONE" if cost_payload["actual_cost"] > 0 else "PENDING",
+                "handled_by": str(r["Người Kiểm Tra"])
+            }
+            supabase.table("repair_process").insert(process_payload).execute()
+
             success_count += 1
             progress_bar.progress((i + 1) / len(df))
+
         except Exception as e:
-            st.error(f"Lỗi tại dòng {i+2}: {e}")
+            st.error(f"Lỗi tại dòng mã máy {m_code}: {e}")
+            
+    return success_count
     return success_count
 def load_enterprise_data(sel_year, sel_month):
     # Lấy dữ liệu kết hợp trạng thái sửa chữa
@@ -175,33 +214,22 @@ def main():
                 cols_to_show = ['MÃ_MÁY', 'customer_name', 'issue_reason', 'VÙNG', 'confirmed_date', 'CHI_PHÍ_THỰC']
                 st.dataframe(df_view[cols_to_show].sort_values('confirmed_date', ascending=False), use_container_width=True)
     with tabs[5]:
-        st.subheader("📥 CỔNG NHẬP DỮ LIỆU ĐA PHÂN CÔNG")
-        st.write("Hệ thống tự động nhận diện mẫu file Miền Bắc và Đà Nẵng qua các cột chung.")
+        st.subheader("📥 CỔNG ĐỒNG BỘ DỮ LIỆU GOOGLE SHEET")
+        st.info("Hệ thống sẽ tự động phân bổ dữ liệu vào 4 bảng: Machines, Cases, Costs và Process.")
         
-        uploaded_file = st.file_uploader("Chọn file CSV sửa chữa (MB hoặc ĐN)", type=["csv"])
+        uploaded_file = st.file_uploader("Upload File CSV từ Google Sheet", type=["csv"])
         
         if uploaded_file:
             df_upload = pd.read_csv(uploaded_file).fillna("")
+            st.dataframe(df_upload.head(3), use_container_width=True)
             
-            # Kiểm tra các cột bắt buộc phải có để định danh máy
-            required = ["MÃ SỐ MÁY", "KHU VỰC", "LOẠI MÁY"]
-            missing = [c for c in required if c not in df_upload.columns]
-            
-            if missing:
-                st.error(f"File thiếu các cột bắt buộc: {missing}")
-            else:
-                st.success("✅ File hợp lệ! Hệ thống đã sẵn sàng đồng bộ.")
-                st.dataframe(df_upload.head(5), use_container_width=True)
-                
-                if st.button("🚀 XÁC NHẬN ĐẨY LÊN CLOUD DATABASE", type="primary"):
-                    with st.spinner("Đang đồng bộ dữ liệu..."):
-                        count = smart_import_repair_data(df_upload)
-                        if count > 0:
-                            st.balloons()
-                            st.success(f"Đã cập nhật thành công {count} máy lên Database!")
-                            # Xóa cache để tab Xu hướng cập nhật ngay
-                            st.cache_data.clear()
-                            st.info("Dữ liệu đã được làm mới. Vui lòng quay lại tab Xu hướng để kiểm tra.")
+            if st.button("🚀 BẮT ĐẦU ĐỒNG BỘ MULTI-TABLE", type="primary"):
+                with st.spinner("Đang thực hiện cấu trúc lại dữ liệu..."):
+                    count = import_to_enterprise_schema(df_upload)
+                    if count > 0:
+                        st.balloons()
+                        st.success(f"Đã đồng bộ thành công {count} sự vụ vào hệ thống!")
+                        st.cache_data.clear() # Xóa cache để tab Xu hướng cập nhật ngay
 
 if __name__ == "__main__":
     main()
