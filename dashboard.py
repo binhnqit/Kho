@@ -10,13 +10,29 @@ st.set_page_config(page_title="LAPTOP MÁY PHA MÀU 4ORANGES", layout="wide", pa
 # Màu sắc và cấu hình Supabase
 ORANGE_COLORS = ["#FF8C00", "#FFA500", "#FF4500", "#E67E22", "#D35400"]
 SUPABASE_URL = "https://cigbnbaanpebwrufzxfg.supabase.co"
-SUPABASE_KEY = st.secrets.get("SUPABASE_KEY", "YOUR_ANON_KEY")
+import streamlit as st
+from supabase import create_client
 
-# Khởi tạo kết nối Supabase
+# --- CẤU HÌNH ---
+SUPABASE_URL = "https://cigbnbaanpebwrufzxfg.supabase.co"
+
+# Lấy key từ secrets một cách an toàn
 try:
+    # Bạn có thể dán trực tiếp vào đây để test nhanh, 
+    # nhưng tốt nhất vẫn là dùng st.secrets["SUPABASE_KEY"]
+    SUPABASE_KEY = st.secrets.get("SUPABASE_KEY", "sb_publishable_NQzqwJ4YhKC4sQGLxyLAyw_mwRFhkRf")
+    
+    # Khởi tạo client
     supabase = create_client(SUPABASE_URL, SUPABASE_KEY)
-except:
-    st.error("Kết nối Database thất bại. Kiểm tra lại Supabase Key trong Secrets.")
+    
+    # Kiểm tra kết nối thực tế bằng cách đếm số dòng trong bảng machines
+    supabase.table("machines").select("id", count="exact").limit(1).execute()
+    st.sidebar.success("✅ Kết nối Database thành công!")
+    
+except Exception as e:
+    st.error("❌ Lỗi xác thực Database (401)")
+    st.info(f"Chi tiết: {e}")
+    st.stop()
 
 # URLs dữ liệu cũ (Legacy)
 URL_LAPTOP_LOI = "https://docs.google.com/spreadsheets/d/e/2PACX-1vS-UP5WFVE63byPckNy_lsT9Rys84A8pPq6cm6rFFBbOnPAsSl1QDLS_A9E45oytg/pub?gid=675485241&single=true&output=csv"
