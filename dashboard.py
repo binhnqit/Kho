@@ -20,37 +20,38 @@ except Exception as e:
 # --- 2. HÀM XỬ LÝ DỮ LIỆU (DATABASE SIDE) ---
 
 @st.cache_data(ttl=60) # Cache trong 1 phút để tối ưu tốc độ
-def load_enterprise_dashboard_data():
+def load_data_from_db():
     try:
-        # Truy vấn kết hợp: Lấy Case -> kèm thông tin Machine -> kèm thông tin Cost
+        # Truy vấn JOIN 3 bảng: Cases -> Machines -> Costs
+        # Lưu ý: Syntax select() này giúp lấy dữ liệu từ các bảng quan hệ
         res = supabase.table("repair_cases").select(
-            "id, branch, customer_name, issue_reason, confirmed_date, is_unrepairable, compensation, "
-            "machines(machine_code, machine_type), "
-            "repair_costs(estimated_cost, actual_cost, confirmed_by)"
+            "*, machines(machine_code, machine_type), repair_costs(estimated_cost, actual_cost, confirmed_by)"
         ).execute()
         
         if not res.data:
             return pd.DataFrame()
             
-        # Chuyển đổi dữ liệu JSON lồng nhau thành bảng phẳng (Flatten)
+        # Làm phẳng dữ liệu JSON (Nested JSON to Flat DataFrame)
         df = pd.json_normalize(res.data)
         
-        # Đổi tên cột cho dễ sử dụng
+        # Đổi tên cột để dễ làm việc và khớp với code cũ
         df = df.rename(columns={
             "machines.machine_code": "MÃ_MÁY",
             "machines.machine_type": "LOẠI_MÁY",
             "repair_costs.actual_cost": "CHI_PHÍ_THỰC",
             "repair_costs.estimated_cost": "CHI_PHÍ_DỰ_KIẾN",
-            "repair_costs.confirmed_by": "NGƯỜI_KIỂM_TRA"
+            "repair_costs.confirmed_by": "NGƯỜI_KIỂM_TRA",
+            "branch": "VÙNG" # Khớp với biểu đồ cũ của pro
         })
         
-        # Xử lý ngày tháng
-        df['confirmed_date'] = pd.to_datetime(df['confirmed_date'])
-        df['NĂM'] = df['confirmed_date'].dt.year
-        df['THÁNG'] = df['confirmed_date'].dt.month
+        # Xử lý ngày tháng từ cột confirmed_date (Ngày xác nhận)
+        if 'confirmed_date' in df.columns:
+            df['confirmed_date'] = pd.to_datetime(df['confirmed_date'])
+            df['NĂM'] = df['confirmed_date'].dt.year
+            df['THÁNG'] = df['confirmed_date'].dt.month
         return df
     except Exception as e:
-        st.error(f"Lỗi truy vấn: {e}")
+        st.error(f"Lỗi Database: {e}")
         return pd.DataFrame()
 
 def smart_import_repair_data(df):
