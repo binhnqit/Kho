@@ -154,6 +154,32 @@ def import_to_enterprise_schema(df):
     return success_count
 
 # --- 4. GIAO DIỆN CHÍNH ---
+def clean_excel_data(df):
+    """Dọn dẹp khoảng trắng, sửa lỗi font và điền ngày rỗng"""
+    # 1. Sửa lỗi font cho các cột quan trọng nếu có
+    rename_map = {
+        'TÃªn KH': 'Tên KH',
+        'LÃ½ Do': 'Lý Do',
+        'Chi NhÃ¡nh': 'Chi Nhánh',
+        'NgÃ y XÃ¡c nhÃ¢n': 'Ngày Xác nhận',
+        'Chi PhÃ­ Thá»±c Táº¿': 'Chi Phí Thực Tế'
+    }
+    df = df.rename(columns=rename_map)
+
+    # 2. Xử lý "Ngày Xác nhận" - Chốt chặn quan trọng
+    if 'Ngày Xác nhận' in df.columns:
+        # Chuyển về string, xóa khoảng trắng rác
+        df['Ngày Xác nhận'] = df['Ngày Xác nhận'].astype(str).str.strip()
+        
+        # Biến các ô "rỗng giả" thành NA thực sự để ffill hoạt động
+        # Một ngày hợp lệ thường có độ dài > 6 ký tự (VD: 1/1/25)
+        df['Ngày Xác nhận'] = df['Ngày Xác nhận'].replace(['', 'nan', 'NaN', 'None'], pd.NA)
+        df.loc[df['Ngày Xác nhận'].str.len() < 6, 'Ngày Xác nhận'] = pd.NA
+        
+        # Điền ngày từ ô phía trên xuống
+        df['Ngày Xác nhận'] = df['Ngày Xác nhận'].ffill()
+        
+    return df
 def main():
     # SIDEBAR
     with st.sidebar:
@@ -254,12 +280,20 @@ def main():
 
     with tabs[2]:
         st.subheader("📥 NHẬP DỮ LIỆU GOOGLE SHEET (CSV)")
-        up = st.file_uploader("Chọn file CSV đã xuất từ Google Sheet", type="csv")
+        up = st.file_uploader("Chọn file CSV", type="csv")
         if up:
-            df_up = pd.read_csv(up).fillna("")
-            st.write("🔍 Xem trước dữ liệu:", df_up.head(3))
+            # Đọc file với utf-8-sig để sửa lỗi font tiếng Việt
+            df_raw = pd.read_csv(up, encoding='utf-8-sig').fillna("")
+            
+            # --- LÀM SẠCH DỮ LIỆU TRƯỚC KHI HIỂN THỊ ---
+            df_up = clean_excel_data(df_raw)
+            
+            st.write("🔍 Xem trước dữ liệu (Đã xử lý ngày & font):")
+            st.dataframe(df_up.head(10), use_container_width=True)
+            
             if st.button("🚀 ĐỒNG BỘ NGAY"):
                 with st.status("Đang đẩy dữ liệu lên hệ thống...", expanded=True) as status:
+                    # Gửi df đã được làm sạch vào hàm import
                     count = import_to_enterprise_schema(df_up)
                     status.update(label=f"Đã đồng bộ xong {count} ca!", state="complete", expanded=False)
                 st.balloons()
