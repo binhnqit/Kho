@@ -65,45 +65,33 @@ def load_data_from_db():
                 df['CHI_PHÍ_THỰC'] = pd.to_numeric(df['CHI_PHÍ_THỰC'], errors='coerce').fillna(0)
 # --- 3. HÀM IMPORT DỮ LIỆU (BẢN CHỐNG NGHẼN & ĐIỀN TRỐNG) ---
 def import_to_enterprise_schema(df):
-    success_count = 0    
+    success_count = 0
     status_text = st.empty()
-    total_rows = len(df)
-    for i, r in df.iterrows():
-        # ... (logic insert/upsert giữ nguyên) ...
-        
-        # Chỉ cập nhật text để người dùng biết đang chạy đến dòng nào của mẻ này
-        if i % 10 == 0:
-            status_text.text(f"⚡ Đang nạp dòng {i+1}/{total_rows} của đợt này...")
-            
-    return success_count
-    # --- 💎 LOGIC THEN CHỐT: XỬ LÝ NGÀY XÁC NHẬN ---
-    if 'Ngày Xác nhận' in df.columns:
-        # 1. Chuyển tất cả về string, trim khoảng trắng thừa
-        df['Ngày Xác nhận'] = df['Ngày Xác nhận'].astype(str).str.strip()
-        
-        # 2. Thay thế các ô rỗng, "nan", "None" hoặc chỉ có dấu cách bằng pd.NA
-        df['Ngày Xác nhận'] = df['Ngày Xác nhận'].replace(['', 'nan', 'NaN', 'None'], pd.NA)
-        
-        # 3. Sử dụng ffill() để lấy giá trị ngày của dòng phía trên điền xuống
-        # Nó sẽ điền liên tục cho đến khi gặp một giá trị ngày mới thì thôi
-        df['Ngày Xác nhận'] = df['Ngày Xác nhận'].ffill()
     
-    # --- (Các phần clean_price giữ nguyên) ---
+    # --- 💎 TRẢ LẠI LOGIC XỬ LÝ KHOẢNG TRẮNG NGÀY ---
+    if 'Ngày Xác nhận' in df.columns:
+        # Chuyển về string và xóa rác
+        df['Ngày Xác nhận'] = df['Ngày Xác nhận'].astype(str).str.strip()
+        # Biến ô trống/nan thành NA thực sự
+        df['Ngày Xác nhận'] = df['Ngày Xác nhận'].replace(['', 'nan', 'NaN', 'None'], pd.NA)
+        # Điền ngày từ dòng trên xuống (Xử lý vụ sếp chỉ gõ dòng đầu)
+        df['Ngày Xác nhận'] = df['Ngày Xác nhận'].ffill()
     
     def clean_price(val):
         try:
             if not val or pd.isna(val): return 0
+            # Xóa dấu phẩy nếu có (Ví dụ 300,000 -> 300000)
             return float(str(val).replace(',', ''))
         except: return 0
 
     total_rows = len(df)
-    
     for i, r in df.iterrows():
         m_code = str(r.get("Mã số máy", "")).strip()
-        if not m_code or m_code.lower() == "nan": continue
+        # Bỏ qua dòng tiêu đề hoặc dòng rỗng mã máy
+        if not m_code or m_code.lower() in ["nan", "mã số máy"]: continue
         
         try:
-            # Bước 1: Upsert Machine
+            # 1. Upsert Machine
             m_res = supabase.table("machines").upsert({
                 "machine_code": m_code,
                 "region": str(r.get("Chi Nhánh", "Chưa xác định"))
@@ -112,15 +100,16 @@ def import_to_enterprise_schema(df):
             if not m_res.data: continue
             machine_id = m_res.data[0]["id"]
 
-            # Bước 2: Chuẩn hóa ngày
+            # 2. Chuẩn hóa ngày (Sau khi đã ffill ở trên)
             confirmed_val = str(r.get("Ngày Xác nhận", "")).strip()
             formatted_date = None
             if confirmed_val and confirmed_val.lower() != "nan":
                 try:
+                    # Chuyển đổi format VN d/m/Y sang Y-m-d cho DB
                     formatted_date = pd.to_datetime(confirmed_val, dayfirst=True).strftime('%Y-%m-%d')
                 except: formatted_date = None
 
-            # Bước 3: Insert Case
+            # 3. Insert Case
             c_res = supabase.table("repair_cases").insert({
                 "machine_id": machine_id,
                 "branch": str(r.get("Chi Nhánh", "Chưa xác định")),
@@ -133,7 +122,7 @@ def import_to_enterprise_schema(df):
                 case_id = c_res.data[0]["id"]
                 actual_cost = clean_price(r.get("Chi Phí Thực Tế", 0))
 
-                # Bước 4: Insert Cost & Process
+                # 4. Insert Cost & Process
                 supabase.table("repair_costs").insert({
                     "repair_case_id": case_id,
                     "estimated_cost": clean_price(r.get("Chi Phí Dự Kiến", 0)),
@@ -149,15 +138,12 @@ def import_to_enterprise_schema(df):
 
                 success_count += 1
             
-        except Exception as e:
-            status_text.warning(f"⚠️ Dòng {i+1} lỗi: {str(e)}")
+            if i % 10 == 0:
+                status_text.text(f"⏳ Đang xử lý dòng {i+1}/{total_rows}...")
         
-        # Chống nghẽn Session (Cập nhật 5 dòng/lần)
-        if i % 5 == 0 or i == total_rows - 1:
-            progress_bar.progress((i + 1) / total_rows)
-            status_text.text(f"⏳ Đang xử lý: {i+1}/{total_rows}...")
+        except Exception as e:
+            continue # Lỗi dòng này thì bỏ qua chạy dòng tiếp
             
-    status_text.success(f"✅ Đã đồng bộ thành công {success_count} sự vụ!")
     return success_count
 
 # --- 4. GIAO DIỆN CHÍNH ---
@@ -303,24 +289,27 @@ def main():
             st.dataframe(df_up.head(10), use_container_width=True)
             
             if st.button("🚀 ĐỒNG BỘ NGAY"):
-                # Chia nhỏ dữ liệu
+                # 1. Làm sạch font và mapping tên cột trước
+                df_clean = clean_excel_data(df_up) 
+                
+                # 2. Chia nhỏ thành từng đợt 100 dòng
                 chunk_size = 100
-                chunks = [df_up[i:i + chunk_size] for i in range(0, df_up.shape[0], chunk_size)]
+                chunks = [df_clean[i:i + chunk_size] for i in range(0, df_clean.shape[0], chunk_size)]
                 num_chunks = len(chunks)
                 
                 total_synced = 0
-                main_progress = st.progress(0) # Thanh tiến trình tổng
+                main_progress = st.progress(0)
                 
-                with st.status("🏗️ Đang xử lý dữ liệu lớn...", expanded=True) as status:
+                with st.status("🏗️ Đang nạp dữ liệu lớn (800+ dòng)...", expanded=True) as status:
                     for idx, chunk in enumerate(chunks):
-                        # Cập nhật thanh tiến trình tổng (từ 0.0 đến 1.0)
+                        # Cập nhật thanh tiến trình (0.0 -> 1.0)
                         main_progress.progress((idx + 1) / num_chunks)
+                        status.write(f"📦 Đang nạp đợt {idx + 1}/{num_chunks}...")
                         
-                        status.write(f"📦 Đợt {idx + 1}/{num_chunks}: Đang xử lý {len(chunk)} dòng...")
                         count = import_to_enterprise_schema(chunk)
                         total_synced += count
                     
-                    status.update(label=f"✅ Thành công! Đã nạp đầy đủ {total_synced} dòng.", state="complete", expanded=False)
+                    status.update(label=f"✅ Thành công! Đã nạp {total_synced} dòng.", state="complete", expanded=False)
                 
                 st.balloons()
                 st.cache_data.clear()
