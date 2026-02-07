@@ -2,157 +2,197 @@ import streamlit as st
 import pandas as pd
 import plotly.express as px
 import datetime
+import time
 from supabase import create_client
 
-# ================== CONFIG ==================
-st.set_page_config(
-    page_title="4ORANGES - REPAIR OPS",
-    layout="wide",
-    page_icon="🎨"
-)
-
+# --- 1. CẤU HÌNH & KẾT NỐI ---
+st.set_page_config(page_title="4ORANGES - REPAIR OPS", layout="wide", page_icon="🎨")
 ORANGE_COLORS = ["#FF8C00", "#FFA500", "#FF4500", "#E67E22", "#D35400"]
 
+# Kết nối Supabase
 SUPABASE_URL = "https://cigbnbaanpebwrufzxfg.supabase.co"
-SUPABASE_KEY = st.secrets.get(
-    "SUPABASE_KEY",
-    "sb_publishable_NQzqwJ4YhKC4sQGLxyLAyw_mwRFhkRf"
-)
+SUPABASE_KEY = st.secrets.get("SUPABASE_KEY", "sb_publishable_NQzqwJ4YhKC4sQGLxyLAyw_mwRFhkRf")
 supabase = create_client(SUPABASE_URL, SUPABASE_KEY)
 
-# ================== DATA ==================
+# --- 2. HÀM XỬ LÝ DỮ LIỆU BỔ SUNG ---
+def clean_excel_data(df):
+    """Xử lý làm sạch dữ liệu từ CSV trước khi nạp"""
+    # Điền dữ liệu cho các ô trống do gộp dòng (ffill)
+    for col in ['Ngày Xác nhận', 'Chi Nhánh', 'Mã số máy']:
+        if col in df.columns:
+            df[col] = df[col].replace("", None).ffill()
+    return df
+
 @st.cache_data(ttl=120)
 def fetch_repair_cases():
-    res = supabase.table("repair_cases") \
-        .select("id, machine_id, branch, confirmed_date, issue_reason, customer_name") \
-        .order("confirmed_date", desc=True) \
-        .limit(2000) \
-        .execute()
-    return res.data or []
+    try:
+        res = supabase.table("repair_cases") \
+            .select("id, machine_id, branch, confirmed_date, issue_reason, customer_name") \
+            .order("confirmed_date", desc=True) \
+            .limit(3000) \
+            .execute()
+        return res.data
+    except Exception as e:
+        st.error(f"Lỗi lấy dữ liệu: {e}")
+        return None
 
 def load_data_from_db():
-    df = pd.DataFrame(fetch_repair_cases())
-    if df.empty:
-        return df
-
-    df["confirmed_date"] = pd.to_datetime(df["confirmed_date"], errors="coerce")
-    df = df.dropna(subset=["confirmed_date"])
-
-    df["NĂM"] = df["confirmed_date"].dt.year
-    df["THÁNG"] = df["confirmed_date"].dt.month
-    df["NGÀY_HIỂN_THỊ"] = df["confirmed_date"].dt.strftime("%d/%m/%Y")
-
-    df.rename(columns={"branch": "VÙNG"}, inplace=True)
-    df["CHI_PHÍ_THỰC"] = 0
+    data = fetch_repair_cases()
+    if not data:
+        return pd.DataFrame()
+    
+    df = pd.DataFrame(data)
+    
+    if 'confirmed_date' in df.columns:
+        df['confirmed_date'] = pd.to_datetime(df['confirmed_date'], errors='coerce')
+        df = df.dropna(subset=['confirmed_date'])
+        df['NĂM'] = df['confirmed_date'].dt.year.astype(int)
+        df['THÁNG'] = df['confirmed_date'].dt.month.astype(int)
+        df['NGÀY_HIỂN_THỊ'] = df['confirmed_date'].dt.strftime('%d/%m/%Y')
+    
+    if 'branch' in df.columns:
+        df = df.rename(columns={'branch': 'VÙNG'})
+    
+    if 'CHI_PHÍ_THỰC' not in df.columns:
+        df['CHI_PHÍ_THỰC'] = 0 
 
     return df
 
-# ================== CSV CLEAN ==================
-def clean_excel_data(df):
-    mapping = {
-        "Ngày Xác nhận": ["Ngay Xac nhan", "Ngày xác nhận"],
-        "Tên KH": ["Ten KH"],
-        "Lý Do": ["Ly Do"],
-        "Chi Nhánh": ["Chi nhanh"],
-        "Mã số máy": ["Ma so may"]
-    }
-
-    for std, aliases in mapping.items():
-        for a in aliases:
-            if a in df.columns:
-                df.rename(columns={a: std}, inplace=True)
-
-    df["Ngày Xác nhận"] = df["Ngày Xác nhận"].astype(str).replace(["", "nan"], pd.NA).ffill()
-    return df
-
-# ================== IMPORT ==================
 def import_to_enterprise_schema(df_chunk):
-    ok = 0
+    """Hàm nạp dữ liệu vào DB theo từng đợt nhỏ"""
+    success_count = 0
     for _, r in df_chunk.iterrows():
         try:
-            code = str(r["Mã số máy"]).strip()
-            if not code:
-                continue
+            m_code = str(r.get("Mã số máy", "")).strip()
+            if not m_code or m_code.lower() == "nan": continue
 
-            m = supabase.table("machines").upsert(
-                {"machine_code": code, "region": r["Chi Nhánh"]},
-                on_conflict="machine_code"
-            ).execute().data[0]
+            # 1. Upsert Machine (Lấy hoặc tạo mới máy)
+            m_res = supabase.table("machines").upsert({
+                "machine_code": m_code,
+                "region": str(r.get("Chi Nhánh", "Chưa xác định"))
+            }, on_conflict="machine_code").execute()
+            
+            if not m_res.data: continue
+            machine_id = m_res.data[0]["id"]
 
-            date = pd.to_datetime(r["Ngày Xác nhận"], dayfirst=True, errors="coerce")
-            date = date.strftime("%Y-%m-%d") if pd.notna(date) else None
+            # 2. Xử lý ngày tháng
+            confirmed_val = str(r.get("Ngày Xác nhận", "")).strip()
+            formatted_date = None
+            if confirmed_val and confirmed_val != "None":
+                try:
+                    formatted_date = pd.to_datetime(confirmed_val, dayfirst=True).strftime('%Y-%m-%d')
+                except: pass
 
+            # 3. Insert Case vào bảng repair_cases
             supabase.table("repair_cases").insert({
-                "machine_id": m["id"],
-                "branch": r["Chi Nhánh"],
-                "customer_name": r["Tên KH"],
-                "issue_reason": r["Lý Do"],
-                "confirmed_date": date
+                "machine_id": machine_id,
+                "branch": str(r.get("Chi Nhánh", "Chưa xác định")),
+                "issue_reason": str(r.get("Lý Do", "")),
+                "customer_name": str(r.get("Tên KH", "")),
+                "confirmed_date": formatted_date
             }).execute()
-
-            ok += 1
-        except:
+            
+            success_count += 1
+        except Exception:
             continue
-    return ok
+    return success_count
 
-# ================== APP ==================
+# --- 3. MAIN APP ---
 def main():
-    df_db = load_data_from_db()
-
-    # -------- SIDEBAR --------
+    # --- SIDEBAR ---
     with st.sidebar:
         st.title("🎨 4ORANGES OPS")
-
-        if st.button("🔄 REFRESH DATABASE"):
+        if st.button('🔄 LÀM MỚI DỮ LIỆU', type="primary", use_container_width=True):
             st.cache_data.clear()
             st.rerun()
+            
+        df_db = load_data_from_db()
 
         if not df_db.empty:
-            year = st.selectbox("📅 Năm", sorted(df_db["NĂM"].unique(), reverse=True))
-            month = st.selectbox(
-                "📆 Tháng",
-                ["Tất cả"] + sorted(df_db[df_db["NĂM"] == year]["THÁNG"].unique().tolist())
-            )
+            st.success(f"📡 Đã tải {len(df_db)} dòng!")
+            list_years = sorted(df_db['NĂM'].unique().tolist(), reverse=True)
+            sel_year = st.selectbox("📅 Chọn Năm", list_years)
+            
+            year_data = df_db[df_db['NĂM'] == sel_year]
+            list_months = ["Tất cả"] + sorted(year_data['THÁNG'].unique().tolist())
+            sel_month = st.selectbox("📆 Chọn Tháng", list_months)
         else:
-            year, month = datetime.datetime.now().year, "Tất cả"
+            st.warning("⚠️ Chưa có dữ liệu")
+            sel_year, sel_month = datetime.datetime.now().year, "Tất cả"
 
-    tabs = st.tabs(["📊 XU HƯỚNG", "📥 NHẬP DỮ LIỆU"])
+    # --- TABS ---
+    tabs = st.tabs(["📊 XU HƯỚNG", "💰 CHI PHÍ", "📥 NHẬP DỮ LIỆU"])
 
-    # -------- DASHBOARD --------
+    # --- TAB 0: XU HƯỚNG ---
     with tabs[0]:
         if df_db.empty:
-            st.info("Chưa có dữ liệu")
-            return
+            st.info("👋 Sếp hãy nạp dữ liệu ở tab NHẬP DỮ LIỆU nhé.")
+        else:
+            df_view = df_db[df_db['NĂM'] == sel_year].copy()
+            if sel_month != "Tất cả":
+                df_view = df_view[df_view['THÁNG'] == sel_month]
+            
+            if df_view.empty:
+                st.warning(f"⚠️ Không có dữ liệu năm {sel_year} tháng {sel_month}")
+            else:
+                k1, k2, k3 = st.columns(3)
+                k1.metric("💰 TỔNG CHI PHÍ", f"{df_view['CHI_PHÍ_THỰC'].sum():,.0f} đ")
+                k2.metric("📋 TỔNG SỰ VỤ", f"{len(df_view)} ca")
+                k3.metric("🏗️ CHI NHÁNH ĐANG CHẠY", f"{df_view['VÙNG'].nunique()}")
 
-        df = df_db[df_db["NĂM"] == year]
-        if month != "Tất cả":
-            df = df[df["THÁNG"] == month]
+                st.divider()
+                c1, c2 = st.columns(2)
+                with c1:
+                    fig_issue = px.bar(df_view['issue_reason'].value_counts().head(10), 
+                                      orientation='h', title="TOP 10 LÝ DO HỎNG", 
+                                      color_discrete_sequence=['#FF4B2B'])
+                    st.plotly_chart(fig_issue, use_container_width=True)
+                with c2:
+                    fig_pie = px.pie(df_view, names='VÙNG', values='id', title="TỶ LỆ SỰ VỤ THEO VÙNG",
+                                    color_discrete_sequence=ORANGE_COLORS)
+                    st.plotly_chart(fig_pie, use_container_width=True)
 
-        k1, k2, k3 = st.columns(3)
-        k1.metric("💰 TỔNG CHI PHÍ", f"{df['CHI_PHÍ_THỰC'].sum():,.0f} đ")
-        k2.metric("📋 SỰ VỤ", len(df))
-        k3.metric("📈 TB/CA", f"{df['CHI_PHÍ_THỰC'].mean():,.0f} đ")
+                st.subheader("📋 DANH SÁCH CHI TIẾT")
+                df_display = df_view.sort_values(by='confirmed_date', ascending=False)
+                actual_cols = ['machine_id', 'customer_name', 'VÙNG', 'NGÀY_HIỂN_THỊ']
+                st.dataframe(
+                    df_display[actual_cols].rename(columns={
+                        'machine_id': 'ID MÁY',
+                        'customer_name': 'TÊN KHÁCH HÀNG',
+                        'NGÀY_HIỂN_THỊ': 'NGÀY XÁC NHẬN'
+                    }),
+                    use_container_width=True, hide_index=True
+                )
 
-        st.dataframe(
-            df.sort_values("confirmed_date", ascending=False)[
-                ["machine_id", "customer_name", "VÙNG", "NGÀY_HIỂN_THỊ"]
-            ].rename(columns={
-                "machine_id": "MÃ MÁY",
-                "customer_name": "KHÁCH HÀNG"
-            }),
-            use_container_width=True
-        )
-
-    # -------- IMPORT --------
-    with tabs[1]:
-        file = st.file_uploader("Upload CSV", type="csv")
-        if file:
-            df = clean_excel_data(pd.read_csv(file, encoding="utf-8-sig"))
-            st.dataframe(df.head())
-
-            if st.button("🚀 IMPORT"):
-                count = import_to_enterprise_schema(df)
-                st.success(f"✅ Đã nhập {count} dòng")
+    # --- TAB 2: NHẬP DỮ LIỆU ---
+    with tabs[2]:
+        st.subheader("📥 NHẬP DỮ LIỆU TỪ CSV")
+        up = st.file_uploader("Chọn file CSV", type="csv")
+        if up:
+            df_raw = pd.read_csv(up, encoding='utf-8-sig').fillna("")
+            df_up = clean_excel_data(df_raw)
+            
+            st.write("🔍 Xem trước dữ liệu (10 dòng đầu):")
+            st.dataframe(df_up.head(10), use_container_width=True)
+            
+            if st.button("🚀 BẮT ĐẦU ĐỒNG BỘ"):
+                chunk_size = 30 # Giảm xuống 30 để chắc chắn không treo
+                total_rows = len(df_up)
+                success_total = 0
+                
+                prog = st.progress(0)
+                status = st.empty()
+                
+                for i in range(0, total_rows, chunk_size):
+                    chunk = df_up.iloc[i : i + chunk_size]
+                    count = import_to_enterprise_schema(chunk)
+                    success_total += count
+                    
+                    percent = min((i + chunk_size) / total_rows, 1.0)
+                    prog.progress(percent)
+                    status.text(f"⏳ Đang xử lý: {success_total}/{total_rows} dòng...")
+                
+                st.success(f"✅ Đã nạp thành công {success_total} dòng!")
                 st.cache_data.clear()
                 st.balloons()
 
