@@ -9,48 +9,53 @@ from supabase import create_client
 st.set_page_config(page_title="4ORANGES - REPAIR OPS", layout="wide", page_icon="🎨")
 ORANGE_COLORS = ["#FF8C00", "#FFA500", "#FF4500", "#E67E22", "#D35400"]
 
+# --- 1. KẾT NỐI (Giữ nguyên) ---
 SUPABASE_URL = "https://cigbnbaanpebwrufzxfg.supabase.co"
 SUPABASE_KEY = st.secrets.get("SUPABASE_KEY", "sb_publishable_NQzqwJ4YhKC4sQGLxyLAyw_mwRFhkRf")
+supabase = create_client(SUPABASE_URL, SUPABASE_KEY)
 
-try:
-    supabase = create_client(SUPABASE_URL, SUPABASE_KEY)
-except Exception as e:
-    st.error(f"Lỗi kết nối Supabase: {e}")
-
-# --- 2. HÀM TẢI DỮ LIỆU (FIX LỖI TREO & MẤT NĂM 2025) ---
-@st.cache_data(ttl=300) # Chỉ để 1 cái cache duy nhất
-def load_data_from_db():
+# --- 2. FIX 4: CHỈ CACHE DỮ LIỆU THÔ (RAW DATA) ---
+@st.cache_data(ttl=120)
+def fetch_raw_data():
+    """Chỉ lấy dữ liệu thô, không xử lý logic để tránh treo"""
     try:
-        # Lấy giới hạn lớn để bao phủ 800+ dòng
+        # Lấy gọn các trường cần thiết, limit 2000 để an toàn
         res = supabase.table("repair_cases").select(
-            "*, machines(machine_code, region), repair_costs(actual_cost)"
-        ).limit(5000).execute()
-        
-        if not res.data:
-            return pd.DataFrame()
-            
-        df = pd.json_normalize(res.data)
-        
-        mapping = {
-            "machines.machine_code": "MÃ_MÁY",
-            "repair_costs.actual_cost": "CHI_PHÍ_THỰC",
-            "branch": "VÙNG"
-        }
-        df = df.rename(columns=mapping)
-
-        if 'confirmed_date' in df.columns:
-            # Ép kiểu ngày tháng, lỗi thì ra NaT
-            df['confirmed_date'] = pd.to_datetime(df['confirmed_date'], errors='coerce')
-            # Điền ngày hiện tại cho các ô lỗi để tránh mất dữ liệu khi lọc Năm
-            df['confirmed_date'] = df['confirmed_date'].fillna(pd.Timestamp.now())
-            
-            df['NĂM'] = df['confirmed_date'].dt.year.astype(int)
-            df['THÁNG'] = df['confirmed_date'].dt.month.astype(int)
-            df['NGÀY_HIỂN_THỊ'] = df['confirmed_date'].dt.strftime('%d/%m/%Y')
-            
-        return df
+            "id, machine_id, branch, confirmed_date, issue_reason, customer_name"
+        ).order("confirmed_date", desc=True).limit(2000).execute()
+        return res.data
     except Exception as e:
+        st.error(f"Lỗi kết nối Supabase: {e}")
+        return None
+
+# --- 3. XỬ LÝ DỮ LIỆU (KHÔNG CACHE HÀM NÀY) ---
+def load_data_from_db():
+    data = fetch_raw_data()
+    if not data:
         return pd.DataFrame()
+    
+    df = pd.DataFrame(data)
+    
+    # Ép kiểu ngày và xử lý lỗi ngày
+    if 'confirmed_date' in df.columns:
+        df['confirmed_date'] = pd.to_datetime(df['confirmed_date'], errors='coerce')
+        # Loại bỏ dòng không có ngày để Dashboard chính xác
+        df = df.dropna(subset=['confirmed_date'])
+        
+        # Tạo cột Năm/Tháng để lọc
+        df['NĂM'] = df['confirmed_date'].dt.year.astype(int)
+        df['THÁNG'] = df['confirmed_date'].dt.month.astype(int)
+        df['NGÀY_HIỂN_THỊ'] = df['confirmed_date'].dt.strftime('%d/%m/%Y')
+        
+    # Mapping giả lập các cột machine nếu chưa join kịp (Để UI không lỗi)
+    if 'VÙNG' not in df.columns and 'branch' in df.columns:
+        df = df.rename(columns={'branch': 'VÙNG'})
+    
+    # Giả lập cột CHI_PHÍ_THỰC nếu chưa kịp lấy từ bảng costs
+    if 'CHI_PHÍ_THỰC' not in df.columns:
+        df['CHI_PHÍ_THỰC'] = 0 
+        
+    return df
 
 # --- 3. HÀM IMPORT (DỌN DẸP SẠCH LỖI VÒNG LẶP) ---
 def import_to_enterprise_schema(df_chunk):
@@ -132,27 +137,20 @@ def clean_excel_data(df):
     return df
 
 def main():
-    # Load dữ liệu ngay đầu để dùng chung
-    df_db = load_data_from_db()
-
-    with st.sidebar:
-        st.title("🎨 4ORANGES OPS")
-        if st.button('🔄 REFRESH DATABASE', type="primary", use_container_width=True):
-            st.cache_data.clear()
-            st.rerun()
-
+    st.sidebar.title("🎨 4ORANGES OPS")
+    
+    # 🧪 FIX 3: DEBUG NGAY TRÊN UI
+    with st.status("📡 Đang kết nối Database...", expanded=False) as status:
+        df_db = load_data_from_db()
         if not df_db.empty:
-            list_years = sorted(df_db['NĂM'].unique().tolist(), reverse=True)
-            sel_year = st.selectbox("📅 Chọn Năm", list_years)
-            
-            year_data = df_db[df_db['NĂM'] == sel_year]
-            list_months = ["Tất cả"] + sorted(year_data['THÁNG'].unique().tolist())
-            sel_month = st.selectbox("📆 Chọn Tháng", list_months)
+            status.update(label=f"✅ Đã tải {len(df_db)} dòng dữ liệu!", state="complete")
         else:
-            sel_year = datetime.datetime.now().year
-            sel_month = "Tất cả"
+            status.update(label="❌ Không có dữ liệu hoặc lỗi kết nối.", state="error")
 
-    tabs = st.tabs(["📊 XU HƯỚNG", "💰 CHI PHÍ", "📥 NHẬP DỮ LIỆU"])
+    # Hiển thị số liệu kiểm tra nhanh (Chỉ sếp thấy để debug)
+    if not df_db.empty:
+        st.sidebar.write(f"🧪 Dòng hiện có: {len(df_db)}")
+        st.sidebar.write(f"🧪 Năm trong DB: {df_db['NĂM'].unique().tolist()}")
 
     with tabs[0]:
         if df_db.empty:
