@@ -22,17 +22,17 @@ except Exception as e:
 @st.cache_data(ttl=60)
 def load_data_from_db():
     try:
-        # Lấy dữ liệu JOIN từ các bảng
+        # 1. Tăng limit lên 5000 để lấy đủ 800+ dòng của sếp
         res = supabase.table("repair_cases").select(
             "*, machines(machine_code, region), repair_costs(actual_cost)"
-        ).execute()
+        ).limit(5000).execute()
         
         if not res.data:
             return pd.DataFrame()
             
         df = pd.json_normalize(res.data)
         
-        # Mapping tên cột từ Database về UI
+        # Mapping lại tên cột
         mapping = {
             "machines.machine_code": "MÃ_MÁY",
             "repair_costs.actual_cost": "CHI_PHÍ_THỰC",
@@ -40,15 +40,18 @@ def load_data_from_db():
         }
         df = df.rename(columns=mapping)
 
-        # Đảm bảo các cột số liệu không bị rỗng (NaN)
+        # 2. Xử lý chi phí rỗng
         if 'CHI_PHÍ_THỰC' in df.columns:
             df['CHI_PHÍ_THỰC'] = pd.to_numeric(df['CHI_PHÍ_THỰC'], errors='coerce').fillna(0)
 
-        # Xử lý thời gian chuẩn xác
+        # 3. Xử lý thời gian (Quan trọng nhất)
         if 'confirmed_date' in df.columns:
+            # Chuyển đổi và xử lý các ô ngày lỗi
             df['confirmed_date'] = pd.to_datetime(df['confirmed_date'], errors='coerce')
-            # Lọc bỏ dòng không có ngày hợp lệ
-            df = df.dropna(subset=['confirmed_date'])
+            
+            # ĐỪNG dropna vội, hãy điền ngày mặc định nếu bị lỗi để sếp vẫn thấy dữ liệu
+            df['confirmed_date'] = df['confirmed_date'].fillna(pd.Timestamp.now())
+            
             df['NĂM'] = df['confirmed_date'].dt.year.astype(int)
             df['THÁNG'] = df['confirmed_date'].dt.month.astype(int)
             df['NGÀY_HIỂN_THỊ'] = df['confirmed_date'].dt.strftime('%d/%m/%Y')
@@ -57,12 +60,6 @@ def load_data_from_db():
     except Exception as e:
         st.error(f"Lỗi khi tải dữ liệu từ DB: {e}")
         return pd.DataFrame()
-    # Thêm đoạn này vào cuối hàm load_data_from_db trước khi return df
-        if not df.empty:
-            if 'CHI_PHÍ_THỰC' not in df.columns:
-                df['CHI_PHÍ_THỰC'] = 0
-            else:
-                df['CHI_PHÍ_THỰC'] = pd.to_numeric(df['CHI_PHÍ_THỰC'], errors='coerce').fillna(0)
 # --- 3. HÀM IMPORT DỮ LIỆU (BẢN CHỐNG NGHẼN & ĐIỀN TRỐNG) ---
 def import_to_enterprise_schema(df):
     success_count = 0
