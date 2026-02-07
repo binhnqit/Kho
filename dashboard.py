@@ -59,14 +59,14 @@ def load_data_from_db():
     return df
 
 def import_to_enterprise_schema(df_chunk):
-    """Hàm nạp dữ liệu vào DB theo từng đợt nhỏ"""
     success_count = 0
     for _, r in df_chunk.iterrows():
         try:
+            # Lấy Mã số máy
             m_code = str(r.get("Mã số máy", "")).strip()
             if not m_code or m_code.lower() == "nan": continue
 
-            # 1. Upsert Machine (Lấy hoặc tạo mới máy)
+            # 1. Upsert bảng machines
             m_res = supabase.table("machines").upsert({
                 "machine_code": m_code,
                 "region": str(r.get("Chi Nhánh", "Chưa xác định"))
@@ -75,25 +75,34 @@ def import_to_enterprise_schema(df_chunk):
             if not m_res.data: continue
             machine_id = m_res.data[0]["id"]
 
-            # 2. Xử lý ngày tháng
+            # 2. Xử lý ngày xác nhận
             confirmed_val = str(r.get("Ngày Xác nhận", "")).strip()
             formatted_date = None
             if confirmed_val and confirmed_val != "None":
-                try:
-                    formatted_date = pd.to_datetime(confirmed_val, dayfirst=True).strftime('%Y-%m-%d')
-                except: pass
+                formatted_date = pd.to_datetime(confirmed_val, dayfirst=True).strftime('%Y-%m-%d')
 
-            # 3. Insert Case vào bảng repair_cases
-            supabase.table("repair_cases").insert({
+            # 3. Lấy chi phí thực tế
+            # Loại bỏ dấu phẩy để DB hiểu là số
+            cost_val = str(r.get("Chi Phí Thực Tế", "0")).replace(",", "")
+            try:
+                actual_cost = float(cost_val)
+            except:
+                actual_cost = 0
+
+            # 4. Insert bảng repair_cases
+            res = supabase.table("repair_cases").insert({
                 "machine_id": machine_id,
                 "branch": str(r.get("Chi Nhánh", "Chưa xác định")),
                 "issue_reason": str(r.get("Lý Do", "")),
                 "customer_name": str(r.get("Tên KH", "")),
-                "confirmed_date": formatted_date
+                "confirmed_date": formatted_date,
+                "actual_cost": actual_cost  # Sếp kiểm tra cột này trong DB tên là gì nhé
             }).execute()
             
-            success_count += 1
-        except Exception:
+            if res.data:
+                success_count += 1
+        except Exception as e:
+            st.error(f"Dòng lỗi: {m_code} - Lỗi: {str(e)}") # Hiện lỗi để sếp chụp ảnh cho tôi xem
             continue
     return success_count
 
