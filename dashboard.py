@@ -52,7 +52,43 @@ def load_data_from_db():
         df['CHI_PHÍ_THỰC'] = 0 
 
     return df
+def import_to_enterprise_schema(df_chunk):
+    success_count = 0
+    for _, r in df_chunk.iterrows():
+        try:
+            m_code = str(r.get("Mã số máy", "")).strip()
+            if not m_code or m_code.lower() == "nan": continue
 
+            # 1. Upsert Machine
+            m_res = supabase.table("machines").upsert({
+                "machine_code": m_code,
+                "region": str(r.get("Chi Nhánh", "Chưa xác định"))
+            }, on_conflict="machine_code").execute()
+            
+            if not m_res.data: continue
+            machine_id = m_res.data[0]["id"]
+
+            # 2. Xử lý ngày (Lấy từ ngày đã ffill)
+            confirmed_val = str(r.get("Ngày Xác nhận", "")).strip()
+            formatted_date = None
+            if confirmed_val and confirmed_val != "None":
+                try:
+                    # Ép kiểu chuẩn cho Supabase (YYYY-MM-DD)
+                    formatted_date = pd.to_datetime(confirmed_val, dayfirst=True).strftime('%Y-%m-%d')
+                except: pass
+
+            # 3. Insert Case
+            supabase.table("repair_cases").insert({
+                "machine_id": machine_id,
+                "branch": str(r.get("Chi Nhánh", "Chưa xác định")),
+                "issue_reason": str(r.get("Lý Do", "")),
+                "confirmed_date": formatted_date # Có thể null nếu file gốc rỗng hoàn toàn
+            }).execute()
+            
+            success_count += 1
+        except Exception as e:
+            continue # Bỏ qua dòng lỗi, chạy tiếp dòng sau để không treo
+    return success_count
 # --- 3. MAIN APP ---
 def main():
     # --- SIDEBAR (FIX 3 & 4) ---
@@ -142,6 +178,39 @@ def main():
                 )
 
     # --- TAB 1 & 2 (Giữ nguyên logic của sếp hoặc bổ sung sau) ---
-
+        with tabs[2]:
+        st.subheader("📥 NHẬP DỮ LIỆU GOOGLE SHEET (CSV)")
+        up = st.file_uploader("Chọn file CSV", type="csv")
+        if up:
+            # Đọc file với utf-8-sig để sửa lỗi font tiếng Việt
+            df_raw = pd.read_csv(up, encoding='utf-8-sig').fillna("")
+            df_up = clean_excel_data(df_raw)
+            
+            st.write("🔍 Xem trước dữ liệu:")
+            st.dataframe(df_up.head(10), use_container_width=True)
+            
+            if st.button("🚀 ĐỒNG BỘ NGAY"):
+                # Chia nhỏ dữ liệu để nạp (Tránh timeout)
+                chunk_size = 50 
+                total_rows = len(df_up)
+                success_total = 0
+                
+                progress_bar = st.progress(0)
+                status_text = st.empty()
+                
+                for i in range(0, total_rows, chunk_size):
+                    chunk = df_up.iloc[i : i + chunk_size]
+                    # Gọi hàm import đã tối ưu
+                    count = import_to_enterprise_schema(chunk)
+                    success_total += count
+                    
+                    # Cập nhật tiến độ
+                    percent = min((i + chunk_size) / total_rows, 1.0)
+                    progress_bar.progress(percent)
+                    status_text.text(f"⏳ Đang nạp: {success_total}/{total_rows} dòng...")
+                
+                st.success(f"✅ Đã nạp thành công {success_total} dòng dữ liệu!")
+                st.cache_data.clear() # Xóa cache để Dashboard nhận dữ liệu mới
+                st.balloons()
 if __name__ == "__main__":
     main()
