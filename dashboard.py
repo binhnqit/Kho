@@ -200,20 +200,37 @@ def main():
                 st.divider()
 
                 # Biểu đồ
+                # --- 3. BIỂU ĐỒ TRỰC QUAN (BẢN CHỐNG CRASH) ---
                 c1, c2 = st.columns(2)
+                
                 with c1:
-                    issue_counts = df_view['issue_reason'].value_counts().reset_index().head(10)
-                    issue_counts.columns = ['Lý do', 'Số lượng']
-                    fig_issue = px.bar(issue_counts, x='Số lượng', y='Lý do', orientation='h', 
-                                      title="TOP 10 LÝ DO HỎNG PHỔ BIẾN",
-                                      color_discrete_sequence=[ORANGE_COLORS[0]])
-                    st.plotly_chart(fig_issue, use_container_width=True)
+                    # Top 10 lý do hỏng
+                    if 'issue_reason' in df_view.columns and not df_view['issue_reason'].empty:
+                        issue_counts = df_view['issue_reason'].value_counts().reset_index().head(10)
+                        issue_counts.columns = ['Lý do', 'Số lượng']
+                        fig_issue = px.bar(issue_counts, x='Số lượng', y='Lý do', orientation='h', 
+                                          title="TOP 10 LÝ DO HỎNG PHỔ BIẾN",
+                                          color_discrete_sequence=[ORANGE_COLORS[0]])
+                        st.plotly_chart(fig_issue, use_container_width=True)
+                    else:
+                        st.info("Chưa có dữ liệu lý do hỏng.")
                 
                 with c2:
-                    fig_pie = px.pie(df_view, names='VÙNG', values='CHI_PHÍ_THỰC', 
-                                    title="CƠ CẤU CHI PHÍ THEO VÙNG", hole=0.4,
-                                    color_discrete_sequence=ORANGE_COLORS)
-                    st.plotly_chart(fig_pie, use_container_width=True)
+                    # Chi phí theo vùng - KIỂM TRA ĐIỀU KIỆN VẼ
+                    can_plot_pie = (
+                        'VÙNG' in df_view.columns and 
+                        'CHI_PHÍ_THỰC' in df_view.columns and 
+                        df_view['CHI_PHÍ_THỰC'].sum() > 0
+                    )
+                    
+                    if can_plot_pie:
+                        fig_pie = px.pie(df_view, names='VÙNG', values='CHI_PHÍ_THỰC', 
+                                        title="CƠ CẤU CHI PHÍ THEO VÙNG", hole=0.4,
+                                        color_discrete_sequence=ORANGE_COLORS)
+                        st.plotly_chart(fig_pie, use_container_width=True)
+                    else:
+                        # Thay vì báo lỗi đỏ, ta hiện thông báo nhẹ nhàng
+                        st.info("💡 Không có dữ liệu chi phí để hiển thị biểu đồ tròn.")
 
                 # Bảng chi tiết
                 st.subheader("📋 DANH SÁCH CHI TIẾT")
