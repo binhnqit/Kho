@@ -57,7 +57,12 @@ def load_data_from_db():
     except Exception as e:
         st.error(f"Lỗi khi tải dữ liệu từ DB: {e}")
         return pd.DataFrame()
-
+    # Thêm đoạn này vào cuối hàm load_data_from_db trước khi return df
+        if not df.empty:
+            if 'CHI_PHÍ_THỰC' not in df.columns:
+                df['CHI_PHÍ_THỰC'] = 0
+            else:
+                df['CHI_PHÍ_THỰC'] = pd.to_numeric(df['CHI_PHÍ_THỰC'], errors='coerce').fillna(0)
 # --- 3. HÀM IMPORT DỮ LIỆU (BẢN CHỐNG NGHẼN & ĐIỀN TRỐNG) ---
 def import_to_enterprise_schema(df):
     success_count = 0
@@ -177,11 +182,20 @@ def main():
             if df_view.empty:
                 st.warning(f"⚠️ Không có dữ liệu trong tháng {sel_month} năm {sel_year}.")
             else:
-                # KPI
+                # --- 2. KPI CHIẾN LƯỢC (BẢN CHỐNG LỖI KEYERROR) ---
                 k1, k2, k3 = st.columns(3)
-                k1.metric("💰 TỔNG CHI PHÍ", f"{df_view['CHI_PHÍ_THỰC'].sum():,.0f} đ")
+                
+                # Kiểm tra xem cột có tồn tại và có dữ liệu không
+                if 'CHI_PHÍ_THỰC' in df_view.columns:
+                    total_cost = df_view['CHI_PHÍ_THỰC'].sum()
+                    avg_cost = df_view['CHI_PHÍ_THỰC'].mean()
+                else:
+                    total_cost = 0
+                    avg_cost = 0
+                
+                k1.metric("💰 TỔNG CHI PHÍ", f"{total_cost:,.0f} đ")
                 k2.metric("📋 TỔNG SỰ VỤ", f"{len(df_view)} ca")
-                k3.metric("📈 TRUNG BÌNH/CA", f"{df_view['CHI_PHÍ_THỰC'].mean():,.0f} đ")
+                k3.metric("📈 TRUNG BÌNH/CA", f"{avg_cost:,.0f} đ")
 
                 st.divider()
 
