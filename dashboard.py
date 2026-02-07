@@ -19,48 +19,93 @@ except Exception as e:
 
 # --- 2. HÀM LOAD DỮ LIỆU (PHÒNG THỦ TẦNG TẦNG LỚP LỚP) ---
 @st.cache_data(ttl=60)
-def load_data_from_db():
-    try:
-        # Lấy dữ liệu JOIN từ 3 bảng chính
-        res = supabase.table("repair_cases").select(
-            "*, machines(machine_code, region), repair_costs(estimated_cost, actual_cost, confirmed_by)"
-        ).execute()
+def import_to_enterprise_schema(df):
+    success_count = 0
+    progress_bar = st.progress(0)
+    status_text = st.empty()
+    
+    # --- 1. CHUẨN HÓA DỮ LIỆU TRƯỚC (QUAN TRỌNG) ---
+    # Tự động điền ngày trống (Forward Fill)
+    if 'Ngày Xác nhận' in df.columns:
+        df['Ngày Xác nhận'] = df['Ngày Xác nhận'].replace(r'^\s*$', pd.NA, regex=True).ffill()
+    
+    # Hàm hỗ trợ làm sạch giá tiền
+    def clean_price(val):
+        try:
+            if not val or pd.isna(val): return 0
+            return float(str(val).replace(',', ''))
+        except: return 0
+
+    total_rows = len(df)
+    
+    for i, r in df.iterrows():
+        m_code = str(r.get("Mã số máy", "")).strip()
+        if not m_code or m_code.lower() == "nan":
+            continue
         
-        if not res.data:
-            return pd.DataFrame()
+        try:
+            # --- BƯỚC 1: UPSERT MACHINE (Bắt buộc xong mới làm bước khác) ---
+            m_res = supabase.table("machines").upsert({
+                "machine_code": m_code,
+                "region": str(r.get("Chi Nhánh", "Chưa xác định"))
+            }, on_conflict="machine_code").execute()
             
-        df = pd.json_normalize(res.data)
+            if not m_res.data:
+                continue
+            
+            machine_id = m_res.data[0]["id"]
+
+            # --- BƯỚC 2: CHUẨN HÓA NGÀY ---
+            confirmed_val = str(r.get("Ngày Xác nhận", "")).strip()
+            formatted_date = None
+            if confirmed_val and confirmed_val.lower() != "nan":
+                try:
+                    # Chuyển định dạng về chuẩn ISO để Database không báo lỗi
+                    formatted_date = pd.to_datetime(confirmed_val, dayfirst=True).strftime('%Y-%m-%d')
+                except:
+                    formatted_date = None
+
+            # --- BƯỚC 3: TẠO CASE ---
+            c_res = supabase.table("repair_cases").insert({
+                "machine_id": machine_id,
+                "branch": str(r.get("Chi Nhánh", "Chưa xác định")),
+                "customer_name": str(r.get("Tên KH", "")),
+                "issue_reason": str(r.get("Lý Do", "")),
+                "confirmed_date": formatted_date
+            }).execute()
+            
+            if c_res.data:
+                case_id = c_res.data[0]["id"]
+                actual_cost = clean_price(r.get("Chi Phí Thực Tế", 0))
+
+                # --- BƯỚC 4: ĐẨY CHI PHÍ & QUY TRÌNH ---
+                # Gom 2 lệnh insert nhỏ lại để giảm độ trễ
+                supabase.table("repair_costs").insert({
+                    "repair_case_id": case_id,
+                    "estimated_cost": clean_price(r.get("Chi Phí Dự Kiến", 0)),
+                    "actual_cost": actual_cost,
+                    "confirmed_by": str(r.get("Người Kiểm Tra", ""))
+                }).execute()
+
+                supabase.table("repair_process").insert({
+                    "repair_case_id": case_id,
+                    "state": "DONE" if actual_cost > 0 else "PENDING",
+                    "handled_by": str(r.get("Người Kiểm Tra", ""))
+                }).execute()
+
+                success_count += 1
+            
+        except Exception as e:
+            # Chỉ hiện lỗi nhỏ dưới status để không làm đứng App
+            status_text.warning(f"⚠️ Dòng {i+1} lỗi: {str(e)}")
         
-        # Mapping cột để thống nhất logic hiển thị
-        mapping = {
-            "machines.machine_code": "MÃ_MÁY",
-            "repair_costs.actual_cost": "CHI_PHÍ_THỰC",
-            "repair_costs.estimated_cost": "CHI_PHÍ_DỰ_KIẾN",
-            "branch": "VÙNG"
-        }
-        df = df.rename(columns={k: v for k, v in mapping.items() if k in df.columns})
-
-        # BIỆN PHÁP MẠNH: Tự tạo cột nếu thiếu để tránh lỗi KeyError
-        REQUIRED = ['CHI_PHÍ_THỰC', 'CHI_PHÍ_DỰ_KIẾN', 'MÃ_MÁY', 'VÙNG', 'confirmed_date', 'customer_name', 'issue_reason', 'is_unrepairable']
-        for col in REQUIRED:
-            if col not in df.columns:
-                df[col] = 0 if 'CHI_PHÍ' in col or 'is_unrepairable' in col else "N/A"
-
-        # Xử lý ngày tháng chuyên sâu (Dứt điểm lỗi 00:00:00)
-        if 'confirmed_date' in df.columns:
-            df['confirmed_date'] = pd.to_datetime(df['confirmed_date'], errors='coerce')
-            df = df.dropna(subset=['confirmed_date'])
-            df['NĂM'] = df['confirmed_date'].dt.year.astype(int)
-            df['THÁNG'] = df['confirmed_date'].dt.month.astype(int)
-            df['NGÀY_HIỂN_THỊ'] = df['confirmed_date'].dt.strftime('%d/%m/%Y')
-
-        # Ép kiểu số cho tiền bạc
-        df['CHI_PHÍ_THỰC'] = pd.to_numeric(df['CHI_PHÍ_THỰC'], errors='coerce').fillna(0)
-        
-        return df
-    except Exception as e:
-        st.error(f"Lỗi Load Data: {e}")
-        return pd.DataFrame()
+        # Cập nhật UI theo lô để tránh nghẽn Session
+        if i % 5 == 0 or i == total_rows - 1:
+            progress_bar.progress((i + 1) / total_rows)
+            status_text.text(f"⏳ Đang xử lý: {i+1}/{total_rows} sự vụ...")
+            
+    status_text.success(f"✅ Hoàn tất! Đã lưu {success_count} sự vụ.")
+    return success_count
 
 # --- 3. HÀM IMPORT DỮ LIỆU (ALL-IN-ONE) ---
 def import_to_enterprise_schema(df):
