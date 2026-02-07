@@ -296,14 +296,21 @@ def main():
             st.dataframe(df_up.head(10), use_container_width=True)
             
             if st.button("🚀 ĐỒNG BỘ NGAY"):
-                with st.status("Đang đẩy dữ liệu lên hệ thống...", expanded=True) as status:
-                    # Gửi df đã được làm sạch vào hàm import
-                    count = import_to_enterprise_schema(df_up)
-                    status.update(label=f"Đã đồng bộ xong {count} ca!", state="complete", expanded=False)
+                # Chia nhỏ dataframe thành các mảng 100 dòng
+                chunk_size = 100
+                chunks = [df_up[i:i + chunk_size] for i in range(0, df_up.shape[0], chunk_size)]
+                
+                total_synced = 0
+                with st.status("Đang đẩy dữ liệu theo từng đợt...", expanded=True) as status:
+                    for idx, chunk in enumerate(chunks):
+                        status.write(f"📦 Đang xử lý đợt {idx + 1} ({len(chunk)} dòng)...")
+                        count = import_to_enterprise_schema(chunk)
+                        total_synced += count
+                    
+                    status.update(label=f"✅ Hoàn tất! Đã đồng bộ tổng cộng {total_synced} dòng.", state="complete", expanded=False)
+                
                 st.balloons()
                 st.cache_data.clear()
-                time.sleep(1)
-                st.rerun()
 
 if __name__ == "__main__":
     main()
