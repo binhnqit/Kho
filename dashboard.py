@@ -139,10 +139,7 @@ def import_to_enterprise_schema(df):
 
                 success_count += 1
             
-        except Exception as e:
-            st.error(f"❌ Lỗi tại dòng {i+1} (Mã máy {m_code}): {str(e)}")
         
-        progress_bar.progress((i + 1) / len(df))
         except Exception as e:
             st.error(f"❌ Lỗi tại dòng {i+1}: {str(e)}")
         
