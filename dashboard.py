@@ -155,29 +155,33 @@ def import_to_enterprise_schema(df):
 
 # --- 4. GIAO DIỆN CHÍNH ---
 def clean_excel_data(df):
-    """Dọn dẹp khoảng trắng, sửa lỗi font và điền ngày rỗng"""
-    # 1. Sửa lỗi font cho các cột quan trọng nếu có
-    rename_map = {
-        'TÃªn KH': 'Tên KH',
-        'LÃ½ Do': 'Lý Do',
-        'Chi NhÃ¡nh': 'Chi Nhánh',
-        'NgÃ y XÃ¡c nhÃ¢n': 'Ngày Xác nhận',
-        'Chi PhÃ­ Thá»±c Táº¿': 'Chi Phí Thực Tế'
+    # 1. Bộ giải mã lỗi font từ Excel/Google Sheet CSV
+    # Quét tất cả các cột hiện có, nếu cột nào chứa ký tự lạ thì đổi tên về chuẩn
+    standard_names = {
+        'Ngày Xác nhận': ['NgÃ y XÃ¡c nhÃ¢n', 'Ngay Xac nhan', 'Ngày xác nhận'],
+        'Tên KH': ['TÃªn KH', 'Ten KH'],
+        'Lý Do': ['LÃ½ Do', 'Ly Do'],
+        'Chi Nhánh': ['Chi NhÃ¡nh', 'Chi nhanh'],
+        'Chi Phí Thực Tế': ['Chi PhÃ­ Thá»±c Táº¿', 'Chi phi thuc te'],
+        'Mã số máy': ['MÃ£ sá»‘ mÃ¡y', 'Ma so may']
     }
-    df = df.rename(columns=rename_map)
+    
+    for real_name, aliases in standard_names.items():
+        for alias in aliases:
+            if alias in df.columns:
+                df = df.rename(columns={alias: real_name})
 
-    # 2. Xử lý "Ngày Xác nhận" - Chốt chặn quan trọng
+    # 2. Xử lý "Ngày Xác nhận" và Fill rỗng
     if 'Ngày Xác nhận' in df.columns:
-        # Chuyển về string, xóa khoảng trắng rác
         df['Ngày Xác nhận'] = df['Ngày Xác nhận'].astype(str).str.strip()
-        
-        # Biến các ô "rỗng giả" thành NA thực sự để ffill hoạt động
-        # Một ngày hợp lệ thường có độ dài > 6 ký tự (VD: 1/1/25)
-        df['Ngày Xác nhận'] = df['Ngày Xác nhận'].replace(['', 'nan', 'NaN', 'None'], pd.NA)
-        df.loc[df['Ngày Xác nhận'].str.len() < 6, 'Ngày Xác nhận'] = pd.NA
-        
-        # Điền ngày từ ô phía trên xuống
+        # Thay thế mọi giá trị rỗng hoặc rác thành NA thực sự
+        df['Ngày Xác nhận'] = df['Ngày Xác nhận'].replace(['', 'nan', 'NaN', 'None', 'None'], pd.NA)
+        # Nếu dòng nào quá ngắn (không phải ngày) thì cũng xóa để fill
+        df.loc[df['Ngày Xác nhận'].str.len() < 5, 'Ngày Xác nhận'] = pd.NA
+        # Tiến hành điền ngày từ dòng trên xuống
         df['Ngày Xác nhận'] = df['Ngày Xác nhận'].ffill()
+        
+    return df
         
     return df
 def main():
