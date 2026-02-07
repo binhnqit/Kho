@@ -145,6 +145,16 @@ def import_to_enterprise_schema(df):
         progress_bar.progress((i + 1) / len(df))
             
     return success_count
+    except Exception as e:
+            st.error(f"❌ Lỗi tại dòng {i+1}: {str(e)}")
+        
+        # Thêm một chút thời gian nghỉ cực ngắn để Streamlit kịp cập nhật UI
+        # giúp tránh tình trạng treo Session
+        if i % 10 == 0: 
+            import time
+            time.sleep(0.01) 
+            
+        progress_bar.progress((i + 1) / len(df))
 
 # --- 4. GIAO DIỆN CHÍNH ---
 def main():
