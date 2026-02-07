@@ -21,34 +21,41 @@ except Exception as e:
 # --- 2. HÀM TẢI DỮ LIỆU TỪ DATABASE (QUAN TRỌNG NHẤT) ---
 @st.cache_data(ttl=60)
 @st.cache_data(ttl=60)
+@st.cache_data(ttl=300) # Lưu bộ nhớ đệm trong 5 phút
 def load_data_from_db():
     try:
-        # Lấy tối đa 5000 dòng để không sót 800 dòng của sếp
+        # Lấy tối đa 5000 dòng để bao phủ toàn bộ 800+ dòng mới
         res = supabase.table("repair_cases").select(
             "*, machines(machine_code, region), repair_costs(actual_cost)"
         ).limit(5000).execute()
         
-        if not res.data: return pd.DataFrame()
+        if not res.data:
+            return pd.DataFrame()
+            
         df = pd.json_normalize(res.data)
         
-        # Rename cột để khớp với logic Dashboard
-        df = df.rename(columns={"machines.machine_code": "MÃ_MÁY", "repair_costs.actual_cost": "CHI_PHÍ_THỰC", "branch": "VÙNG"})
+        # Đổi tên cột chuẩn để Dashboard nhận diện
+        mapping = {
+            "machines.machine_code": "MÃ_MÁY",
+            "repair_costs.actual_cost": "CHI_PHÍ_THỰC",
+            "branch": "VÙNG"
+        }
+        df = df.rename(columns=mapping)
 
+        # Xử lý ngày tháng - ĐẢM BẢO LẤY ĐƯỢC NĂM 2025
         if 'confirmed_date' in df.columns:
-            # Chuyển về datetime, dòng nào lỗi sẽ thành NaT (không crash)
             df['confirmed_date'] = pd.to_datetime(df['confirmed_date'], errors='coerce')
             
-            # 💡 QUAN TRỌNG: Thay vì dropna, ta điền ngày hiện tại cho các dòng lỗi ngày
-            # để sếp vẫn thấy dữ liệu và biết đường sửa lại trong file gốc
+            # Nếu ngày bị trống (do file gốc có khoảng trắng), tạm để ngày hiện tại để không mất dòng dữ liệu
             df['confirmed_date'] = df['confirmed_date'].fillna(pd.Timestamp.now())
             
             df['NĂM'] = df['confirmed_date'].dt.year.astype(int)
             df['THÁNG'] = df['confirmed_date'].dt.month.astype(int)
             df['NGÀY_HIỂN_THỊ'] = df['confirmed_date'].dt.strftime('%d/%m/%Y')
-        
+            
         return df
     except Exception as e:
-        st.error(f"Lỗi tải DB: {e}")
+        st.error(f"Lỗi kết nối database: {e}")
         return pd.DataFrame()
 # --- 3. HÀM IMPORT DỮ LIỆU (BẢN CHỐNG NGHẼN & ĐIỀN TRỐNG) ---
 def import_to_enterprise_schema(df):
@@ -185,9 +192,11 @@ def main():
     tabs = st.tabs(["📊 XU HƯỚNG", "💰 CHI PHÍ", "📥 NHẬP DỮ LIỆU"])
 
     with tabs[0]:
+        # Kiểm tra nếu dữ liệu trống
         if df_db.empty:
-            st.info("👋 Chào sếp! Hiện tại hệ thống chưa có dữ liệu. Sếp hãy nhập dữ liệu ở tab **NHẬP DỮ LIỆU** nhé.")
+            st.info("👋 Chào sếp! Hiện tại hệ thống chưa có dữ liệu hoặc đang tải. Sếp hãy kiểm tra lại kết nối hoặc nhập dữ liệu nhé.")
         else:
+            # 1. Lọc dữ liệu theo Sidebar (Năm/Tháng)
             df_view = df_db[df_db['NĂM'] == sel_year].copy()
             if sel_month != "Tất cả":
                 df_view = df_view[df_view['THÁNG'] == sel_month]
@@ -195,65 +204,61 @@ def main():
             if df_view.empty:
                 st.warning(f"⚠️ Không có dữ liệu trong tháng {sel_month} năm {sel_year}.")
             else:
-                # --- 2. KPI CHIẾN LƯỢC (BẢN CHỐNG LỖI KEYERROR) ---
+                # --- 2. KPI CHIẾN LƯỢC ---
                 k1, k2, k3 = st.columns(3)
                 
-                # Kiểm tra xem cột có tồn tại và có dữ liệu không
-                if 'CHI_PHÍ_THỰC' in df_view.columns:
-                    total_cost = df_view['CHI_PHÍ_THỰC'].sum()
-                    avg_cost = df_view['CHI_PHÍ_THỰC'].mean()
-                else:
-                    total_cost = 0
-                    avg_cost = 0
+                # Tính toán các chỉ số an toàn
+                total_cost = df_view['CHI_PHÍ_THỰC'].sum() if 'CHI_PHÍ_THỰC' in df_view.columns else 0
+                total_cases = len(df_view)
+                avg_cost = total_cost / total_cases if total_cases > 0 else 0
                 
                 k1.metric("💰 TỔNG CHI PHÍ", f"{total_cost:,.0f} đ")
-                k2.metric("📋 TỔNG SỰ VỤ", f"{len(df_view)} ca")
+                k2.metric("📋 TỔNG SỰ VỤ", f"{total_cases} ca")
                 k3.metric("📈 TRUNG BÌNH/CA", f"{avg_cost:,.0f} đ")
 
                 st.divider()
 
-                # Biểu đồ
-                # --- 3. BIỂU ĐỒ TRỰC QUAN (BẢN CHỐNG CRASH) ---
+                # --- 3. BIỂU ĐỒ TRỰC QUAN ---
                 c1, c2 = st.columns(2)
                 
                 with c1:
-                    # Top 10 lý do hỏng
-                    if 'issue_reason' in df_view.columns and not df_view['issue_reason'].empty:
+                    # Top 10 lý do hỏng (Lấy từ trường issue_reason)
+                    if 'issue_reason' in df_view.columns:
                         issue_counts = df_view['issue_reason'].value_counts().reset_index().head(10)
                         issue_counts.columns = ['Lý do', 'Số lượng']
                         fig_issue = px.bar(issue_counts, x='Số lượng', y='Lý do', orientation='h', 
                                           title="TOP 10 LÝ DO HỎNG PHỔ BIẾN",
-                                          color_discrete_sequence=[ORANGE_COLORS[0]])
+                                          color_discrete_sequence=['#FF4B2B'])
                         st.plotly_chart(fig_issue, use_container_width=True)
-                    else:
-                        st.info("Chưa có dữ liệu lý do hỏng.")
                 
                 with c2:
-                    # Chi phí theo vùng - KIỂM TRA ĐIỀU KIỆN VẼ
-                    can_plot_pie = (
-                        'VÙNG' in df_view.columns and 
-                        'CHI_PHÍ_THỰC' in df_view.columns and 
-                        df_view['CHI_PHÍ_THỰC'].sum() > 0
-                    )
-                    
-                    if can_plot_pie:
+                    # Cơ cấu chi phí theo Vùng (Lấy từ branch/VÙNG)
+                    if 'VÙNG' in df_view.columns and total_cost > 0:
                         fig_pie = px.pie(df_view, names='VÙNG', values='CHI_PHÍ_THỰC', 
                                         title="CƠ CẤU CHI PHÍ THEO VÙNG", hole=0.4,
-                                        color_discrete_sequence=ORANGE_COLORS)
+                                        color_discrete_sequence=px.colors.sequential.Oranges_r)
                         st.plotly_chart(fig_pie, use_container_width=True)
-                    else:
-                        # Thay vì báo lỗi đỏ, ta hiện thông báo nhẹ nhàng
-                        st.info("💡 Không có dữ liệu chi phí để hiển thị biểu đồ tròn.")
 
-                # Bảng chi tiết
+                st.divider()
+
+                # --- 4. BẢNG CHI TIẾT (Xử lý mượt 800+ dòng) ---
                 st.subheader("📋 DANH SÁCH CHI TIẾT")
-                actual_cols = ['MÃ_MÁY', 'customer_name', 'issue_reason', 'VÙNG', 'NGÀY_HIỂN_THỊ', 'CHI_PHÍ_THỰC']
-                safe_cols = [c for c in actual_cols if c in df_view.columns]
+                # Chọn các cột quan trọng để hiển thị
+                show_cols = ['MÃ_MÁY', 'customer_name', 'issue_reason', 'VÙNG', 'NGÀY_HIỂN_THỊ', 'CHI_PHÍ_THỰC']
+                safe_show = [c for c in show_cols if c in df_view.columns]
                 
-                if safe_cols:
-                    sort_col = 'confirmed_date' if 'confirmed_date' in df_view.columns else safe_cols[0]
-                    df_display = df_view.sort_values(by=sort_col, ascending=False)[safe_cols]
-                    st.dataframe(df_display, use_container_width=True, hide_index=True)
+                # Sắp xếp theo ngày mới nhất
+                df_display = df_view.sort_values(by='confirmed_date', ascending=False)
+                
+                st.dataframe(
+                    df_display[safe_show], 
+                    use_container_width=True, 
+                    hide_index=True,
+                    column_config={
+                        "CHI_PHÍ_THỰC": st.column_config.NumberColumn("Chi phí (VNĐ)", format="%d"),
+                        "NGÀY_HIỂN_THỊ": "Ngày Xác Nhận"
+                    }
+                )
 
     with tabs[2]:
         st.subheader("📥 NHẬP DỮ LIỆU GOOGLE SHEET (CSV)")
