@@ -167,7 +167,7 @@ def clean_excel_data(df):
 def main():
     # SIDEBAR
     with st.sidebar:
-        st.image("https://upload.wikimedia.org/wikipedia/commons/d/d0/Logo_4Oranges.png", width=150)
+        
         st.title("🎨 4ORANGES OPS")
         
         if st.button('🔄 REFRESH DATABASE', type="primary", use_container_width=True):
