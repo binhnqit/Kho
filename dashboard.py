@@ -20,36 +20,26 @@ except Exception as e:
 
 # --- 2. HÀM TẢI DỮ LIỆU TỪ DATABASE (QUAN TRỌNG NHẤT) ---
 @st.cache_data(ttl=60)
+@st.cache_data(ttl=60)
 def load_data_from_db():
     try:
-        # 1. Tăng limit lên 5000 để lấy đủ 800+ dòng của sếp
+        # Lấy tối đa 5000 dòng để không sót 800 dòng của sếp
         res = supabase.table("repair_cases").select(
             "*, machines(machine_code, region), repair_costs(actual_cost)"
         ).limit(5000).execute()
         
-        if not res.data:
-            return pd.DataFrame()
-            
+        if not res.data: return pd.DataFrame()
         df = pd.json_normalize(res.data)
         
-        # Mapping lại tên cột
-        mapping = {
-            "machines.machine_code": "MÃ_MÁY",
-            "repair_costs.actual_cost": "CHI_PHÍ_THỰC",
-            "branch": "VÙNG"
-        }
-        df = df.rename(columns=mapping)
+        # Rename cột để khớp với logic Dashboard
+        df = df.rename(columns={"machines.machine_code": "MÃ_MÁY", "repair_costs.actual_cost": "CHI_PHÍ_THỰC", "branch": "VÙNG"})
 
-        # 2. Xử lý chi phí rỗng
-        if 'CHI_PHÍ_THỰC' in df.columns:
-            df['CHI_PHÍ_THỰC'] = pd.to_numeric(df['CHI_PHÍ_THỰC'], errors='coerce').fillna(0)
-
-        # 3. Xử lý thời gian (Quan trọng nhất)
         if 'confirmed_date' in df.columns:
-            # Chuyển đổi và xử lý các ô ngày lỗi
+            # Chuyển về datetime, dòng nào lỗi sẽ thành NaT (không crash)
             df['confirmed_date'] = pd.to_datetime(df['confirmed_date'], errors='coerce')
             
-            # ĐỪNG dropna vội, hãy điền ngày mặc định nếu bị lỗi để sếp vẫn thấy dữ liệu
+            # 💡 QUAN TRỌNG: Thay vì dropna, ta điền ngày hiện tại cho các dòng lỗi ngày
+            # để sếp vẫn thấy dữ liệu và biết đường sửa lại trong file gốc
             df['confirmed_date'] = df['confirmed_date'].fillna(pd.Timestamp.now())
             
             df['NĂM'] = df['confirmed_date'].dt.year.astype(int)
@@ -58,23 +48,41 @@ def load_data_from_db():
         
         return df
     except Exception as e:
-        st.error(f"Lỗi khi tải dữ liệu từ DB: {e}")
+        st.error(f"Lỗi tải DB: {e}")
         return pd.DataFrame()
 # --- 3. HÀM IMPORT DỮ LIỆU (BẢN CHỐNG NGHẼN & ĐIỀN TRỐNG) ---
 def import_to_enterprise_schema(df):
     success_count = 0
-    status_text = st.empty()
-    
-    # --- 💎 LOGIC "BẤT TỬ" CHO NGÀY XÁC NHẬN ---
-    # Phải làm sạch toàn bộ DF trước khi chạy vòng lặp i, r
+    # --- 💎 ĐIỀN NGÀY TRỐNG TRƯỚC KHI CHẠY VÒNG LẶP ---
     if 'Ngày Xác nhận' in df.columns:
-        # Xóa khoảng trắng, chuyển về string
         df['Ngày Xác nhận'] = df['Ngày Xác nhận'].astype(str).str.strip()
-        # Nhận diện các ô trống giả
+        # Biến các ô trông có vẻ trống thành NA thật sự
         df['Ngày Xác nhận'] = df['Ngày Xác nhận'].replace(['', 'nan', 'NaN', 'None'], pd.NA)
-        # Điền ngày từ dòng trên xuống cho các dòng trống
+        # Điền ngày từ dòng trên xuống cho đến khi gặp ngày mới
         df['Ngày Xác nhận'] = df['Ngày Xác nhận'].ffill()
     
+    # ... (Các phần clean_price giữ nguyên) ...
+
+    for i, r in df.iterrows():
+        # ... (Phần lấy machine_id giữ nguyên) ...
+        
+        # Lấy ngày đã được ffill
+        confirmed_val = str(r.get("Ngày Xác nhận", "")).strip()
+        formatted_date = None
+        if confirmed_val and confirmed_val.lower() != "nan":
+            try:
+                # Ép kiểu d/m/Y về Y-m-d để lưu vào Supabase
+                formatted_date = pd.to_datetime(confirmed_val, dayfirst=True).strftime('%Y-%m-%d')
+            except: formatted_date = None
+
+        # Insert vào repair_cases
+        supabase.table("repair_cases").insert({
+            "machine_id": machine_id,
+            "branch": str(r.get("Chi Nhánh", "Chưa xác định")),
+            "confirmed_date": formatted_date # Lưu ngày đã xử lý
+            # ... các trường khác ...
+        }).execute()
+        # ...
     # Hàm dọn dẹp giá tiền (Xử lý dấu phẩy)
     def clean_price(val):
         try:
