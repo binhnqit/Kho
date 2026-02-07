@@ -69,9 +69,19 @@ def import_to_enterprise_schema(df):
     progress_bar = st.progress(0)
     status_text = st.empty()
     
-    # 1. Forward Fill: Điền ngày trống bằng ngày của dòng phía trên
+    # --- 💎 LOGIC THEN CHỐT: XỬ LÝ NGÀY XÁC NHẬN ---
     if 'Ngày Xác nhận' in df.columns:
-        df['Ngày Xác nhận'] = df['Ngày Xác nhận'].replace(r'^\s*$', pd.NA, regex=True).ffill()
+        # 1. Chuyển tất cả về string, trim khoảng trắng thừa
+        df['Ngày Xác nhận'] = df['Ngày Xác nhận'].astype(str).str.strip()
+        
+        # 2. Thay thế các ô rỗng, "nan", "None" hoặc chỉ có dấu cách bằng pd.NA
+        df['Ngày Xác nhận'] = df['Ngày Xác nhận'].replace(['', 'nan', 'NaN', 'None'], pd.NA)
+        
+        # 3. Sử dụng ffill() để lấy giá trị ngày của dòng phía trên điền xuống
+        # Nó sẽ điền liên tục cho đến khi gặp một giá trị ngày mới thì thôi
+        df['Ngày Xác nhận'] = df['Ngày Xác nhận'].ffill()
+    
+    # --- (Các phần clean_price giữ nguyên) ---
     
     def clean_price(val):
         try:
