@@ -65,10 +65,17 @@ def load_data_from_db():
                 df['CHI_PHÍ_THỰC'] = pd.to_numeric(df['CHI_PHÍ_THỰC'], errors='coerce').fillna(0)
 # --- 3. HÀM IMPORT DỮ LIỆU (BẢN CHỐNG NGHẼN & ĐIỀN TRỐNG) ---
 def import_to_enterprise_schema(df):
-    success_count = 0
-    progress_bar = st.progress(0)
+    success_count = 0    
     status_text = st.empty()
-    
+    total_rows = len(df)
+    for i, r in df.iterrows():
+        # ... (logic insert/upsert giữ nguyên) ...
+        
+        # Chỉ cập nhật text để người dùng biết đang chạy đến dòng nào của mẻ này
+        if i % 10 == 0:
+            status_text.text(f"⚡ Đang nạp dòng {i+1}/{total_rows} của đợt này...")
+            
+    return success_count
     # --- 💎 LOGIC THEN CHỐT: XỬ LÝ NGÀY XÁC NHẬN ---
     if 'Ngày Xác nhận' in df.columns:
         # 1. Chuyển tất cả về string, trim khoảng trắng thừa
@@ -296,21 +303,29 @@ def main():
             st.dataframe(df_up.head(10), use_container_width=True)
             
             if st.button("🚀 ĐỒNG BỘ NGAY"):
-                # Chia nhỏ dataframe thành các mảng 100 dòng
+                # Chia nhỏ dữ liệu
                 chunk_size = 100
                 chunks = [df_up[i:i + chunk_size] for i in range(0, df_up.shape[0], chunk_size)]
+                num_chunks = len(chunks)
                 
                 total_synced = 0
-                with st.status("Đang đẩy dữ liệu theo từng đợt...", expanded=True) as status:
+                main_progress = st.progress(0) # Thanh tiến trình tổng
+                
+                with st.status("🏗️ Đang xử lý dữ liệu lớn...", expanded=True) as status:
                     for idx, chunk in enumerate(chunks):
-                        status.write(f"📦 Đang xử lý đợt {idx + 1} ({len(chunk)} dòng)...")
+                        # Cập nhật thanh tiến trình tổng (từ 0.0 đến 1.0)
+                        main_progress.progress((idx + 1) / num_chunks)
+                        
+                        status.write(f"📦 Đợt {idx + 1}/{num_chunks}: Đang xử lý {len(chunk)} dòng...")
                         count = import_to_enterprise_schema(chunk)
                         total_synced += count
                     
-                    status.update(label=f"✅ Hoàn tất! Đã đồng bộ tổng cộng {total_synced} dòng.", state="complete", expanded=False)
+                    status.update(label=f"✅ Thành công! Đã nạp đầy đủ {total_synced} dòng.", state="complete", expanded=False)
                 
                 st.balloons()
                 st.cache_data.clear()
+                time.sleep(2)
+                st.rerun()
 
 if __name__ == "__main__":
     main()
