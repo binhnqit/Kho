@@ -55,111 +55,75 @@ def load_repair_data_final():
 # --- 3. GIAO DIỆN ---
 def main():
     st.set_page_config(page_title="4ORANGES OPS 2026", layout="wide", page_icon="🎨")
+    
+    # 1. LOAD DỮ LIỆU CHUNG (Dùng chung cho cả 2 Tab)
+    df_db = load_repair_data_final()
+    
+    # 2. KHỞI TẠO TABS
     tab_dash, tab_admin = st.tabs(["📊 BÁO CÁO VẬN HÀNH", "📥 QUẢN TRỊ"])
 
-    if st.button("🚀 CẬP NHẬT SỐ LIỆU MỚI NHẤT"):
-            st.cache_data.clear()
-            st.rerun()
-
-        df_db = load_repair_data_final()
-        
+    # --- TAB 1: BÁO CÁO VẬN HÀNH ---
+    with tab_dash:
         if df_db.empty:
-            st.info("Chưa có dữ liệu hợp lệ. Vui lòng kiểm tra lại Database.")
+            st.info("Chưa có dữ liệu hợp lệ. Vui lòng kiểm tra lại Database hoặc nạp dữ liệu ở Tab Quản trị.")
         else:
-            # --- A. KHỞI TẠO SESSION STATE (CHỐNG GIẬT UX) ---
-            available_years = sorted(df_db['NĂM'].unique(), reverse=True)
-            
-            if 'sel_year' not in st.session_state:
-                st.session_state.sel_year = available_years[0]
-            if 'sel_month' not in st.session_state:
-                st.session_state.sel_month = "Tất cả"
-
-            # --- B. SIDEBAR CẤU HÌNH ---
+            # --- A. SIDEBAR (Chỉ hiện khi ở Tab Báo cáo) ---
             with st.sidebar:
                 st.header("⚙️ BỘ LỌC")
                 if st.button("🔄 LÀM MỚI DỮ LIỆU", use_container_width=True):
                     st.cache_data.clear()
                     st.rerun()
-                
                 st.divider()
                 
-                # Chọn Năm
-                sel_year = st.selectbox(
-                    "📅 Chọn năm",
-                    options=available_years,
-                    index=available_years.index(st.session_state.sel_year),
-                    key="sel_year_widget" # Tránh trùng key với session_state
-                )
-                st.session_state.sel_year = sel_year
-
-                # Lọc danh sách tháng dựa trên năm đã chọn
-                available_months = sorted(df_db[df_db['NĂM'] == sel_year]['THÁNG'].unique().tolist())
+                # Logic chọn Năm/Tháng
+                available_years = sorted(df_db['NĂM'].unique(), reverse=True)
+                sel_year = st.selectbox("📅 Chọn năm", options=available_years, key="year_filter")
                 
-                # Chọn Tháng
-                sel_month = st.selectbox(
-                    "📆 Chọn tháng",
-                    options=["Tất cả"] + available_months,
-                    index=0 if st.session_state.sel_month == "Tất cả" else (available_months.index(st.session_state.sel_month) + 1 if st.session_state.sel_month in available_months else 0),
-                    key="sel_month_widget"
-                )
-                st.session_state.sel_month = sel_month
+                available_months = sorted(df_db[df_db['NĂM'] == sel_year]['THÁNG'].unique().tolist())
+                sel_month = st.selectbox("📆 Chọn tháng", options=["Tất cả"] + available_months, key="month_filter")
 
-            # --- C. LOGIC LỌC DỮ LIỆU ---
-            df_view = df_db[df_db['NĂM'] == st.session_state.sel_year].copy()
-            if st.session_state.sel_month != "Tất cả":
-                df_view = df_view[df_view['THÁNG'] == st.session_state.sel_month]
+            # --- B. LỌC DỮ LIỆU VIEW ---
+            df_view = df_db[df_db['NĂM'] == sel_year].copy()
+            if sel_month != "Tất cả":
+                df_view = df_view[df_view['THÁNG'] == sel_month]
 
-            # --- D. HIỂN THỊ TIÊU ĐỀ ĐỘNG ---
-            month_label = f"Tháng {st.session_state.sel_month}" if st.session_state.sel_month != "Tất cả" else "Cả năm"
-            st.title(f"📈 Báo cáo vận hành {month_label} / {st.session_state.sel_year}")
-
-            # --- E. KPI NÂNG CẤP ---
+            # --- C. HIỂN THỊ KPI ---
+            month_label = f"Tháng {sel_month}" if sel_month != "Tất cả" else "Cả năm"
+            st.title(f"📈 Báo cáo vận hành {month_label} / {sel_year}")
+            
             c1, c2, c3 = st.columns(3)
+            # Dữ liệu CHI_PHÍ đã được ép kiểu numeric trong SQL nên sum() sẽ ra kết quả chuẩn
             c1.metric("💰 TỔNG CHI PHÍ", f"{df_view['CHI_PHÍ'].sum():,.0f} đ")
             c2.metric("🛠️ SỐ CA SỬA CHỮA", f"{len(df_view)} ca")
-            
-            # KPI Chi nhánh nổi bật (Nhiều ca nhất)
             top_branch = df_view['branch'].value_counts().idxmax() if not df_view.empty else "N/A"
             c3.metric("🏢 CHI NHÁNH NHIỀU CA NHẤT", top_branch)
 
             st.divider()
 
-            # --- F. BIỂU ĐỒ & BẢNG DỮ LIỆU ---
+            # --- D. BIỂU ĐỒ & BẢNG ---
             col_chart, col_table = st.columns([6, 4])
-            
             with col_chart:
                 st.subheader("📅 Xu hướng sự vụ theo thứ")
-                if not df_view.empty:
-                    order = ['Thứ 2', 'Thứ 3', 'Thứ 4', 'Thứ 5', 'Thứ 6', 'Thứ 7', 'Chủ Nhật']
-                    day_stats = df_view['THỨ'].value_counts().reindex(order).fillna(0).reset_index()
-                    day_stats.columns = ['THỨ', 'SỐ_CA']
-                    
-                    fig = px.line(day_stats, x='THỨ', y='SỐ_CA', markers=True, color_discrete_sequence=['#00CC96'])
-                    
-                    # Tinh chỉnh biểu đồ theo yêu cầu sếp
-                    fig.update_layout(
-                        height=350,
-                        xaxis_title=None,
-                        yaxis_title="Số lượng ca",
-                        yaxis_gridcolor="rgba(0,0,0,0.05)",
-                        margin=dict(l=20, r=20, t=20, b=20)
-                    )
-                    st.plotly_chart(fig, use_container_width=True)
+                order = ['Thứ 2', 'Thứ 3', 'Thứ 4', 'Thứ 5', 'Thứ 6', 'Thứ 7', 'Chủ Nhật']
+                day_stats = df_view['THỨ'].value_counts().reindex(order).fillna(0).reset_index()
+                day_stats.columns = ['THỨ', 'SỐ_CA']
+                fig = px.line(day_stats, x='THỨ', y='SỐ_CA', markers=True, color_discrete_sequence=['#00CC96'])
+                fig.update_layout(height=350, margin=dict(l=20, r=20, t=20, b=20))
+                st.plotly_chart(fig, use_container_width=True)
 
             with col_table:
                 st.subheader("📋 10 ca mới cập nhật")
-                # Sort rõ ràng theo thời gian mới nhất
-                df_latest = df_view.sort_values('date_dt', ascending=False).head(10)
+                # Hiển thị mã máy vừa nạp (ví dụ 1366) ở ngay đây
                 st.dataframe(
-                    df_latest[['date_dt', 'branch', 'machine_id', 'CHI_PHÍ']],
-                    use_container_width=True,
-                    hide_index=True
+                    df_view.sort_values('date_dt', ascending=False).head(10)[['date_dt', 'branch', 'machine_id', 'CHI_PHÍ']],
+                    use_container_width=True, hide_index=True
                 )
 
-            # --- G. CHI TIẾT DƯỚI CÙNG ---
             with st.expander("🔎 Xem toàn bộ dữ liệu chi tiết đã lọc"):
                 st.dataframe(df_view.sort_values('date_dt', ascending=False), use_container_width=True)
 
+    # --- TAB 2: QUẢN TRỊ (Phần sếp vừa yêu cầu) ---
+    
     with tab_admin:
         st.title("📥 HỆ THỐNG QUẢN TRỊ DỮ LIỆU")
         
