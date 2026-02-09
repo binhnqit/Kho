@@ -185,73 +185,126 @@ def main():
                 st.dataframe(df_view.sort_values('created_dt', ascending=False), use_container_width=True)
 
     # --- TAB 2: QUẢN TRỊ ---
+    # --- TAB 2: QUẢN TRỊ (Sub-tabs nâng cấp) ---
     with tab_admin:
         st.title("📥 HỆ THỐNG QUẢN TRỊ DỮ LIỆU")
-        col_import, col_manual = st.columns([1, 1])
+        
+        # Chia nhỏ các khu vực quản lý
+        sub1, sub2, sub3 = st.tabs(["➕ NHẬP LIỆU", "📜 LỊCH SỬ & ROLLBACK", "⚙️ CẤU HÌNH"])
 
-        with col_import:
-            st.subheader("📂 Import từ File CSV")
-            uploaded_file = st.file_uploader("Chọn file CSV", type=["csv"], key="csv_upload")
-            if uploaded_file:
-                df_up = pd.read_csv(uploaded_file)
-                # Tiền xử lý dữ liệu trước khi nạp
-                if 'confirmed_date' in df_up.columns:
-                    df_up['confirmed_date'] = pd.to_datetime(df_up['confirmed_date'], errors='coerce').dt.strftime('%Y-%m-%d')
-                if 'compensation' in df_up.columns:
-                    df_up['compensation'] = pd.to_numeric(df_up['compensation'], errors='coerce').fillna(0)
-                
-                # Gán nhãn thời gian thực hiện để Dashboard bắt được record mới nhất
-                df_up['created_at'] = datetime.now().isoformat()
-                
-                st.write("👀 Xem trước dữ liệu:")
-                st.dataframe(df_up.head(3), use_container_width=True)
-                
-                if st.button("🚀 Xác nhận Upload", use_container_width=True, type="primary"):
-                    try:
-                        # Lưu ý: Nếu bảng có Primary Key, upsert sẽ đè dữ liệu trùng
-                        res = supabase.table("repair_cases").upsert(df_up.to_dict(orient='records')).execute()
-                        if res.data:
-                            st.success(f"✅ Đã nạp {len(res.data)} dòng thành công!")
-                            st.cache_data.clear()
-                            st.rerun()
-                    except Exception as e:
-                        st.error(f"Lỗi nạp file: {e}")
+        # --- SUB-TAB 1: NHẬP LIỆU ---
+        with sub1:
+            col_import, col_manual = st.columns([1, 1])
 
-        with col_manual:
-            st.subheader("✍️ Nhập tay ca mới")
-            with st.form("manual_entry_form_pro", clear_on_submit=True):
-                m_c1, m_c2 = st.columns(2)
-                with m_c1:
-                    f_date = st.date_input("Ngày xác nhận (Nghiệp vụ)", value=datetime.now())
-                    f_branch = st.selectbox("Chi nhánh", ["Miền Bắc", "Miền Trung", "Miền Nam"])
-                with m_c2:
-                    f_machine = st.text_input("Mã số máy") 
-                    f_cost = st.number_input("Chi phí thực tế (đ)", min_value=0, step=10000)
-
-                f_customer = st.text_input("Tên khách hàng")
-                f_reason = st.text_area("Lý do hư hỏng")
-                
-                if st.form_submit_button("💾 Lưu vào hệ thống", use_container_width=True):
-                    if not f_machine or not f_customer:
-                        st.warning("⚠️ Sếp quên điền Mã máy hoặc Tên khách rồi!")
-                    else:
+            with col_import:
+                st.subheader("📂 Import File CSV")
+                uploaded_file = st.file_uploader("Chọn file CSV", type=["csv"], key="csv_upload_pro")
+                if uploaded_file:
+                    df_up = pd.read_csv(uploaded_file)
+                    
+                    # Tạo batch_id duy nhất cho lần nạp này để dễ dàng Rollback
+                    batch_id = f"BATCH_{datetime.now().strftime('%Y%m%d_%H%M%S')}"
+                    
+                    if 'confirmed_date' in df_up.columns:
+                        df_up['confirmed_date'] = pd.to_datetime(df_up['confirmed_date'], errors='coerce').dt.strftime('%Y-%m-%d')
+                    
+                    df_up['compensation'] = pd.to_numeric(df_up.get('compensation', 0), errors='coerce').fillna(0)
+                    df_up['created_at'] = datetime.now().isoformat()
+                    df_up['batch_id'] = batch_id # Gắn nhãn batch
+                    
+                    st.info(f"Mã lô nạp (Batch ID): **{batch_id}**")
+                    st.dataframe(df_up.head(3), use_container_width=True)
+                    
+                    if st.button("🚀 Xác nhận Upload Lô này", use_container_width=True, type="primary"):
                         try:
-                            new_record = {
-                                "confirmed_date": f_date.isoformat(),
-                                "branch": f_branch,
-                                "machine_id": str(f_machine).strip(),
-                                "compensation": float(f_cost),
-                                "customer_name": f_customer,
-                                "issue_reason": f_reason,
-                                "created_at": datetime.now().isoformat() # Time hệ thống chuẩn
-                            }
-                            res = supabase.table("repair_cases").insert(new_record).execute()
+                            res = supabase.table("repair_cases").upsert(df_up.to_dict(orient='records')).execute()
                             if res.data:
-                                st.success("✅ Đã lưu thành công!")
+                                st.success(f"✅ Đã nạp thành công lô {batch_id}")
                                 st.cache_data.clear()
                                 st.rerun()
                         except Exception as e:
                             st.error(f"Lỗi: {e}")
+
+            with col_manual:
+                st.subheader("✍️ Nhập tay ca mới")
+                with st.form("manual_entry_form_v4", clear_on_submit=True):
+                    f_date = st.date_input("Ngày xác nhận nghiệp vụ", value=datetime.now())
+                    
+                    # KHÓA CHỈNH SỬA QUÁ KHỨ (> 30 ngày) -
+                    is_too_old = (datetime.now().date() - f_date).days > 30
+                    
+                    m_c1, m_c2 = st.columns(2)
+                    with m_c1:
+                        f_branch = st.selectbox("Chi nhánh", ["Miền Bắc", "Miền Trung", "Miền Nam"])
+                        f_machine = st.text_input("Mã số máy")
+                    with m_c2:
+                        f_cost = st.number_input("Chi phí thực tế", min_value=0)
+                        f_customer = st.text_input("Tên khách hàng")
+                    
+                    f_reason = st.text_area("Lý do hư hỏng")
+                    
+                    if st.form_submit_button("💾 Lưu vào hệ thống", use_container_width=True):
+                        if is_too_old:
+                            st.error("❌ Không được chỉnh ca quá 30 ngày. Vui lòng liên hệ Tổng Admin.")
+                        elif not f_machine or not f_customer:
+                            st.warning("⚠️ Vui lòng điền đủ Mã máy và Khách hàng.")
+                        else:
+                            try:
+                                new_record = {
+                                    "confirmed_date": f_date.isoformat(),
+                                    "branch": f_branch,
+                                    "machine_id": str(f_machine).strip(),
+                                    "compensation": float(f_cost),
+                                    "customer_name": f_customer,
+                                    "issue_reason": f_reason,
+                                    "created_at": datetime.now().isoformat(),
+                                    "batch_id": "MANUAL_ENTRY"
+                                }
+                                res = supabase.table("repair_cases").insert(new_record).execute()
+                                if res.data:
+                                    st.success("✅ Đã lưu!")
+                                    st.cache_data.clear()
+                                    st.rerun()
+                            except Exception as e:
+                                st.error(f"Lỗi: {e}")
+
+        # --- SUB-TAB 2: LỊCH SỬ & ROLLBACK (Phòng ngừa lỗi nạp file sai) ---
+        with sub2:
+            st.subheader("📜 Quản lý các lô dữ liệu (Batch)")
+            if not df_db.empty and 'batch_id' in df_db.columns:
+                # Lấy danh sách các batch trừ Manual
+                batches = df_db[df_db['batch_id'] != 'MANUAL_ENTRY']['batch_id'].unique().tolist()
+                
+                if batches:
+                    selected_batch = st.selectbox("Chọn Lô dữ liệu cần kiểm tra/xóa:", batches)
+                    batch_data = df_db[df_db['batch_id'] == selected_batch]
+                    
+                    st.write(f"Lô này có: **{len(batch_data)} bản ghi**")
+                    st.dataframe(batch_data.head(5), use_container_width=True)
+                    
+                    # Chức năng Rollback -
+                    if st.button(f"🗑️ XOÁ TOÀN BỘ LÔ {selected_batch}", type="secondary"):
+                        confirm = st.warning(f"Bạn có chắc muốn xóa vĩnh viễn {len(batch_data)} dòng này?")
+                        if st.button("🔥 XÁC NHẬN XOÁ NGAY"):
+                            try:
+                                supabase.table("repair_cases").delete().eq("batch_id", selected_batch).execute()
+                                st.success("💥 Đã xóa thành công lô dữ liệu lỗi!")
+                                st.cache_data.clear()
+                                st.rerun()
+                            except Exception as e:
+                                st.error(f"Lỗi khi rollback: {e}")
+                else:
+                    st.info("Chưa có lô dữ liệu CSV nào được nạp.")
+            else:
+                st.info("Dữ liệu hiện tại không hỗ trợ Batch ID.")
+
+        # --- SUB-TAB 3: CẤU HÌNH (Dọn dẹp/Bảo trì) ---
+        with sub3:
+            st.subheader("🧹 Bảo trì dữ liệu")
+            st.warning("Khu vực dành cho kĩ thuật viên hệ thống")
+            if st.button("🧹 Dọn dẹp Cache Streamlit", use_container_width=True):
+                st.cache_data.clear()
+                st.success("Đã làm mới toàn bộ cache ứng dụng.")
 
 if __name__ == "__main__":
     main()
