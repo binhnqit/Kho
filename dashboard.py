@@ -11,12 +11,13 @@ supabase = create_client(url, key)
 
 # --- 2. HÀM XỬ LÝ (NÂNG CẤP PHÁ CACHE & ÉP THỨ TỰ) ---
 @st.cache_data(ttl=30) # Cache ngắn để nhạy bén với dữ liệu mới
+@st.cache_data(ttl=30)
 def load_repair_data_final():
     try:
-        # ÉP ORDER TẠI TẦNG DATABASE: Phá vỡ snapshot cũ của PostgREST cache
+        # FIX: Dùng desc=True thay vì ascending=False
         res = supabase.table("repair_cases") \
             .select("*") \
-            .order("created_at", ascending=False) \
+            .order("created_at", desc=True) \
             .execute()
             
         if not res.data: 
@@ -24,14 +25,12 @@ def load_repair_data_final():
         
         df = pd.DataFrame(res.data)
 
-        # PHÂN TÁCH THỜI GIAN: Confirmed (Nghiệp vụ) vs Created (Hệ thống)
+        # PHÂN TÁCH THỜI GIAN
         df['confirmed_dt'] = pd.to_datetime(df['confirmed_date'], errors='coerce')
         df['created_dt']   = pd.to_datetime(df['created_at'], errors='coerce')
-        
-        # Dọn dẹp dòng lỗi ngày nghiệp vụ
         df = df.dropna(subset=['confirmed_dt'])
 
-        # TRÍCH XUẤT THÔNG TIN LỌC KPI
+        # TRÍCH XUẤT THÔNG TIN
         df['NĂM'] = df['confirmed_dt'].dt.year.astype(int)
         df['THÁNG'] = df['confirmed_dt'].dt.month.astype(int)
         
@@ -39,10 +38,10 @@ def load_repair_data_final():
                    'Thursday': 'Thứ 5', 'Friday': 'Thứ 6', 'Saturday': 'Thứ 7', 'Sunday': 'Chủ Nhật'}
         df['THỨ'] = df['confirmed_dt'].dt.day_name().map(day_map)
 
-        # CHUẨN HÓA SỐ LIỆU: Ép về numeric để sum() không ra 0
+        # CHUẨN HÓA SỐ LIỆU
         df['CHI_PHÍ'] = pd.to_numeric(df['compensation'], errors='coerce').fillna(0)
         
-        # Sắp xếp trong Pandas một lần nữa cho chắc chắn
+        # Sắp xếp trong Pandas (Ở đây thì lại dùng ascending=False sếp nhé, trớ trêu vậy đó!)
         df = df.sort_values(by='created_dt', ascending=False)
 
         return df
