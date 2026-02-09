@@ -111,8 +111,14 @@ def main():
             with col_left:
                 st.subheader("📅 Xu hướng sự vụ theo thứ")
                 order = ['Thứ 2', 'Thứ 3', 'Thứ 4', 'Thứ 5', 'Thứ 6', 'Thứ 7', 'Chủ Nhật']
-                day_stats = df_view['THỨ'].value_counts().reindex(order).fillna(0).reset_index()
-                st.plotly_chart(px.area(day_stats, x='index', y='THỨ', markers=True), use_container_width=True)
+                day_counts = df_view['THỨ'].value_counts().reindex(order).fillna(0)
+                day_stats = day_counts.reset_index()
+                day_stats.columns = ['NGÀY_TRONG_TUẦN', 'SỐ_CA'] # Ép tên cột rõ ràng
+
+                st.plotly_chart(
+                px.area(day_stats, x='NGÀY_TRONG_TUẦN', y='SỐ_CA', markers=True), 
+                use_container_width=True
+                )
             
             with col_right:
                 st.subheader("🚨 Ca chi phí cao")
