@@ -186,7 +186,7 @@ def main():
 
     
     # Thêm tab AI vào danh sách tabs
-    tab_dash, tab_admin, tab_ai = st.tabs(["📊 BÁO CÁO", "📥 QUẢN TRỊ", "🧠 AI INSIGHTS"])
+    #tab_dash, tab_admin, tab_ai = st.tabs(["📊 BÁO CÁO", "📥 QUẢN TRỊ", "🧠 AI INSIGHTS"])
 
     # --- TAB 3: AI PHÂN TÍCH THÔNG MINH ---
     with tab_ai:
