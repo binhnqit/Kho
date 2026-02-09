@@ -11,7 +11,6 @@ supabase = create_client(url, key)
 
 # --- 2. HÀM XỬ LÝ (NÂNG CẤP PHÁ CACHE & ÉP THỨ TỰ) ---
 @st.cache_data(ttl=30) # Cache ngắn để nhạy bén với dữ liệu mới
-@st.cache_data(ttl=30)
 def load_repair_data_final():
     try:
         # FIX: Dùng desc=True thay vì ascending=False
