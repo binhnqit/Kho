@@ -30,24 +30,29 @@ def load_repair_data_final():
         if not res.data: return pd.DataFrame()
         df = pd.DataFrame(res.data)
 
-        # 1. Sửa lỗi Font
+        # 1. FIX FONT & BRANCH: Xử lý triệt để lỗi hiển thị
         encoding_map = {"Miá» n Trung": "Miền Trung", "Miá» n Báº¯c": "Miền Bắc", "Miá» n Nam": "Miền Nam"}
-        df['branch'] = df['branch'].replace(encoding_map)
+        df['branch'] = df['branch'].replace(encoding_map).fillna("Chưa xác định")
 
-        # 2. Xử lý ngày tháng (Chỉ lấy confirmed_date, bỏ qua created_at để tránh data ảo)
+        # 2. FIX DATA ẢO: Chỉ lấy confirmed_date, loại bỏ hoàn toàn fallback created_at
         df['date_dt'] = pd.to_datetime(df['confirmed_date'], errors='coerce')
-        df = df.dropna(subset=['date_dt']) # Dòng nào confirmed_date trống sẽ bị loại bỏ khỏi Dashboard
-        
+        df = df.dropna(subset=['date_dt']) # Loại bỏ 1000 ca nếu không có ngày xác nhận
+
+        # 3. TẠO CỘT THỜI GIAN (Bắt buộc phải tạo lại sau khi dropna)
         df['NĂM'] = df['date_dt'].dt.year.astype(int)
         df['THÁNG'] = df['date_dt'].dt.month.astype(int)
+        
+        day_map = {'Monday': 'Thứ 2', 'Tuesday': 'Thứ 3', 'Wednesday': 'Thứ 4',
+                   'Thursday': 'Thứ 5', 'Friday': 'Thứ 6', 'Saturday': 'Thứ 7', 'Sunday': 'Chủ Nhật'}
+        df['THỨ'] = df['date_dt'].dt.day_name().map(day_map)
 
-        # 3. Xử lý chi phí
+        # 4. CHI PHÍ
         df['compensation'] = df['compensation'].apply(lambda x: 0 if str(x).lower() == 'false' else x)
         df['CHI_PHÍ'] = pd.to_numeric(df['compensation'], errors='coerce').fillna(0)
         
         return df
     except Exception as e:
-        st.error(f"Lỗi: {e}")
+        st.error(f"Lỗi Load Data: {e}")
         return pd.DataFrame()
 
 # --- 3. GIAO DIỆN CHÍNH ---
