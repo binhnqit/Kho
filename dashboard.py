@@ -95,6 +95,9 @@ def main():
             # A. SIDEBAR - BỘ LỌC THÔNG MINH
             with st.sidebar:
                 st.markdown("## ⚙️ CẤU HÌNH LỌC")
+                if st.sidebar.button("🔄 Làm mới toàn bộ dữ liệu"):
+                    st.cache_data.clear()
+                st.rerun()
                 years = sorted(df_db['NĂM'].unique(), reverse=True)
                 
                 with st.form("filter_form"):
