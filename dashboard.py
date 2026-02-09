@@ -9,14 +9,11 @@ url = "https://cigbnbaanpebwrufzxfg.supabase.co"
 key = st.secrets["SUPABASE_KEY"]
 supabase = create_client(url, key)
 
-# --- 2. HÀM XỬ LÝ (TRÁI TIM CỦA APP) ---
-@st.cache_data(ttl=60)
-# --- 2. HÀM XỬ LÝ (NÂNG CẤP PHÁ CACHE SUPABASE) ---
-@st.cache_data(ttl=30) # Giảm xuống 30s để tăng độ nhạy
+# --- 2. HÀM XỬ LÝ (NÂNG CẤP PHÁ CACHE & ÉP THỨ TỰ) ---
+@st.cache_data(ttl=30) # Cache ngắn để nhạy bén với dữ liệu mới
 def load_repair_data_final():
     try:
-        # 1. ÉP ORDER TẠI TẦNG DATABASE: Đảm bảo dữ liệu mới nhất luôn nằm trong luồng trả về
-        # Dùng created_at desc để phá vỡ snapshot cũ của PostgREST
+        # ÉP ORDER TẠI TẦNG DATABASE: Phá vỡ snapshot cũ của PostgREST cache
         res = supabase.table("repair_cases") \
             .select("*") \
             .order("created_at", ascending=False) \
@@ -27,13 +24,14 @@ def load_repair_data_final():
         
         df = pd.DataFrame(res.data)
 
-        # 2. PHÂN TÁCH THỜI GIAN (Confirmed = Nghiệp vụ, Created = Hệ thống)
+        # PHÂN TÁCH THỜI GIAN: Confirmed (Nghiệp vụ) vs Created (Hệ thống)
         df['confirmed_dt'] = pd.to_datetime(df['confirmed_date'], errors='coerce')
         df['created_dt']   = pd.to_datetime(df['created_at'], errors='coerce')
         
+        # Dọn dẹp dòng lỗi ngày nghiệp vụ
         df = df.dropna(subset=['confirmed_dt'])
 
-        # 3. TRÍCH XUẤT THỜI GIAN NGHIỆP VỤ
+        # TRÍCH XUẤT THÔNG TIN LỌC KPI
         df['NĂM'] = df['confirmed_dt'].dt.year.astype(int)
         df['THÁNG'] = df['confirmed_dt'].dt.month.astype(int)
         
@@ -41,32 +39,31 @@ def load_repair_data_final():
                    'Thursday': 'Thứ 5', 'Friday': 'Thứ 6', 'Saturday': 'Thứ 7', 'Sunday': 'Chủ Nhật'}
         df['THỨ'] = df['confirmed_dt'].dt.day_name().map(day_map)
 
-        # 4. CHUẨN HÓA CHI PHÍ
+        # CHUẨN HÓA SỐ LIỆU: Ép về numeric để sum() không ra 0
         df['CHI_PHÍ'] = pd.to_numeric(df['compensation'], errors='coerce').fillna(0)
         
-        # Sắp xếp lại lần cuối trong Pandas để đảm bảo view luôn mới nhất
+        # Sắp xếp trong Pandas một lần nữa cho chắc chắn
         df = df.sort_values(by='created_dt', ascending=False)
 
         return df
     except Exception as e:
-        st.error(f"Lỗi logic: {e}")
+        st.error(f"Lỗi logic tải data: {e}")
         return pd.DataFrame()
-
-# --- TRONG HÀM main() ---
-
 
 # --- 3. GIAO DIỆN CHÍNH ---
 def main():
     st.set_page_config(page_title="4ORANGES OPS 2026", layout="wide", page_icon="🎨")
     
-    # Thêm dòng DEBUG theo ý sếp để kiểm tra độ trễ của DB
+    # Load dữ liệu đầu vào
     df_db = load_repair_data_final()
 
+    # --- KHỐI DEBUG (Kiểm tra độ trễ DB) ---
     if not df_db.empty:
-    with st.expander("🛠️ DEBUG HỆ THỐNG (Dành cho sếp)"):
-        st.write("Dữ liệu mới nhất vừa ghi nhận từ Database:")
-        # Show 5 dòng mới nhất theo thời gian tạo hệ thống
-        st.write(df_db[['created_dt', 'machine_id', 'confirmed_dt']].head(5))
+        with st.expander("🛠️ DEBUG HỆ THỐNG (Dành cho sếp)"):
+            st.write("5 record mới nhất theo thời gian hệ thống (created_at):")
+            # Dùng để soi xem record vừa nạp đã lên tới app chưa
+            st.write(df_db[['created_dt', 'machine_id', 'confirmed_dt', 'CHI_PHÍ']].head(5))
+
     tab_dash, tab_admin = st.tabs(["📊 BÁO CÁO VẬN HÀNH", "📥 QUẢN TRỊ"])
 
     # --- TAB 1: BÁO CÁO VẬN HÀNH ---
@@ -81,13 +78,14 @@ def main():
                     st.rerun()
                 st.divider()
                 
+                # Lọc theo ngày Nghiệp vụ (Confirmed)
                 available_years = sorted(df_db['NĂM'].unique(), reverse=True)
                 sel_year = st.selectbox("📅 Chọn năm", options=available_years, key="year_filter")
                 
                 available_months = sorted(df_db[df_db['NĂM'] == sel_year]['THÁNG'].unique().tolist())
                 sel_month = st.selectbox("📆 Chọn tháng", options=["Tất cả"] + available_months, key="month_filter")
 
-            # Lọc view dựa trên confirmed_dt
+            # Lọc dữ liệu hiển thị
             df_view = df_db[df_db['NĂM'] == sel_year].copy()
             if sel_month != "Tất cả":
                 df_view = df_view[df_view['THÁNG'] == sel_month]
@@ -99,7 +97,7 @@ def main():
             c1.metric("💰 TỔNG CHI PHÍ", f"{df_view['CHI_PHÍ'].sum():,.0f} đ")
             c2.metric("🛠️ SỐ CA SỬA CHỮA", f"{len(df_view)} ca")
             top_branch = df_view['branch'].value_counts().idxmax() if not df_view.empty else "N/A"
-            c3.metric("🏢 CHI NHÁNH NHIỀU CA NHẤT", top_branch)
+            c3.metric("🏢 MIỀN NHIỀU CA NHẤT", top_branch)
 
             st.divider()
 
@@ -114,7 +112,7 @@ def main():
 
             with col_table:
                 st.subheader("📋 10 ca mới cập nhật")
-                # FIX LỖI KEYERROR: Đổi date_dt -> confirmed_dt và sort theo created_dt
+                # Sắp xếp theo Created (Hệ thống) để thấy ca mới nhất ngay lập tức
                 st.dataframe(
                     df_view.sort_values('created_dt', ascending=False).head(10)[['confirmed_dt', 'branch', 'machine_id', 'CHI_PHÍ']],
                     use_container_width=True, hide_index=True
@@ -133,25 +131,28 @@ def main():
             uploaded_file = st.file_uploader("Chọn file CSV", type=["csv"], key="csv_upload")
             if uploaded_file:
                 df_up = pd.read_csv(uploaded_file)
+                # Tiền xử lý dữ liệu trước khi nạp
                 if 'confirmed_date' in df_up.columns:
                     df_up['confirmed_date'] = pd.to_datetime(df_up['confirmed_date'], errors='coerce').dt.strftime('%Y-%m-%d')
                 if 'compensation' in df_up.columns:
                     df_up['compensation'] = pd.to_numeric(df_up['compensation'], errors='coerce').fillna(0)
                 
-                df_up['created_at'] = datetime.now().isoformat() # Đánh dấu thời gian nạp hệ thống
+                # Gán nhãn thời gian thực hiện để Dashboard bắt được record mới nhất
+                df_up['created_at'] = datetime.now().isoformat()
                 
-                st.write("👀 Xem trước:")
+                st.write("👀 Xem trước dữ liệu:")
                 st.dataframe(df_up.head(3), use_container_width=True)
                 
                 if st.button("🚀 Xác nhận Upload", use_container_width=True, type="primary"):
                     try:
+                        # Lưu ý: Nếu bảng có Primary Key, upsert sẽ đè dữ liệu trùng
                         res = supabase.table("repair_cases").upsert(df_up.to_dict(orient='records')).execute()
                         if res.data:
                             st.success(f"✅ Đã nạp {len(res.data)} dòng thành công!")
                             st.cache_data.clear()
                             st.rerun()
                     except Exception as e:
-                        st.error(f"Lỗi: {e}")
+                        st.error(f"Lỗi nạp file: {e}")
 
         with col_manual:
             st.subheader("✍️ Nhập tay ca mới")
@@ -169,7 +170,7 @@ def main():
                 
                 if st.form_submit_button("💾 Lưu vào hệ thống", use_container_width=True):
                     if not f_machine or not f_customer:
-                        st.warning("⚠️ Điền thiếu thông tin rồi sếp!")
+                        st.warning("⚠️ Sếp quên điền Mã máy hoặc Tên khách rồi!")
                     else:
                         try:
                             new_record = {
@@ -179,11 +180,11 @@ def main():
                                 "compensation": float(f_cost),
                                 "customer_name": f_customer,
                                 "issue_reason": f_reason,
-                                "created_at": datetime.now().isoformat() # Hệ thống time
+                                "created_at": datetime.now().isoformat() # Time hệ thống chuẩn
                             }
                             res = supabase.table("repair_cases").insert(new_record).execute()
                             if res.data:
-                                st.success("✅ Đã lưu!")
+                                st.success("✅ Đã lưu thành công!")
                                 st.cache_data.clear()
                                 st.rerun()
                         except Exception as e:
