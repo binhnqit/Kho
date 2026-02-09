@@ -11,24 +11,29 @@ supabase = create_client(url, key)
 
 # --- 2. HÀM XỬ LÝ (TRÁI TIM CỦA APP) ---
 @st.cache_data(ttl=60)
+# --- 2. HÀM XỬ LÝ (NÂNG CẤP PHÁ CACHE SUPABASE) ---
+@st.cache_data(ttl=30) # Giảm xuống 30s để tăng độ nhạy
 def load_repair_data_final():
     try:
-        res = supabase.table("repair_cases").select("*").execute()
+        # 1. ÉP ORDER TẠI TẦNG DATABASE: Đảm bảo dữ liệu mới nhất luôn nằm trong luồng trả về
+        # Dùng created_at desc để phá vỡ snapshot cũ của PostgREST
+        res = supabase.table("repair_cases") \
+            .select("*") \
+            .order("created_at", ascending=False) \
+            .execute()
+            
         if not res.data: 
             return pd.DataFrame()
         
         df = pd.DataFrame(res.data)
 
-        # 1. PHÂN TÁCH HAI LOẠI THỜI GIAN THEO CHUẨN NGHIỆP VỤ
-        # confirmed_dt dùng cho KPI, Xu hướng, Bộ lọc
+        # 2. PHÂN TÁCH THỜI GIAN (Confirmed = Nghiệp vụ, Created = Hệ thống)
         df['confirmed_dt'] = pd.to_datetime(df['confirmed_date'], errors='coerce')
-        # created_dt dùng để sắp xếp thứ tự nhập liệu hệ thống
         df['created_dt']   = pd.to_datetime(df['created_at'], errors='coerce')
         
-        # Loại bỏ rác nếu không có ngày nghiệp vụ
         df = df.dropna(subset=['confirmed_dt'])
 
-        # 2. TRÍCH XUẤT THÔNG TIN NGHIỆP VỤ (KPI + FILTER)
+        # 3. TRÍCH XUẤT THỜI GIAN NGHIỆP VỤ
         df['NĂM'] = df['confirmed_dt'].dt.year.astype(int)
         df['THÁNG'] = df['confirmed_dt'].dt.month.astype(int)
         
@@ -36,25 +41,32 @@ def load_repair_data_final():
                    'Thursday': 'Thứ 5', 'Friday': 'Thứ 6', 'Saturday': 'Thứ 7', 'Sunday': 'Chủ Nhật'}
         df['THỨ'] = df['confirmed_dt'].dt.day_name().map(day_map)
 
-        # 3. CHUẨN HÓA DỮ LIỆU SỐ & CHI NHÁNH
-        # Ép kiểu để sum() không bị lỗi 0đ
+        # 4. CHUẨN HÓA CHI PHÍ
         df['CHI_PHÍ'] = pd.to_numeric(df['compensation'], errors='coerce').fillna(0)
-        encoding_dict = {"Miá» n Trung": "Miền Trung", "Miá» n Báº¯c": "Miền Bắc", "Miá» n Nam": "Miền Nam"}
-        df['branch'] = df['branch'].replace(encoding_dict)
-
-        # 4. SẮP XẾP THEO HỆ THỐNG (Mới nhập hiện lên đầu - Không lo dậm chân tại chỗ)
+        
+        # Sắp xếp lại lần cuối trong Pandas để đảm bảo view luôn mới nhất
         df = df.sort_values(by='created_dt', ascending=False)
 
         return df
     except Exception as e:
-        st.error(f"Lỗi logic tải data: {e}")
+        st.error(f"Lỗi logic: {e}")
         return pd.DataFrame()
+
+# --- TRONG HÀM main() ---
+
 
 # --- 3. GIAO DIỆN CHÍNH ---
 def main():
     st.set_page_config(page_title="4ORANGES OPS 2026", layout="wide", page_icon="🎨")
     
+    # Thêm dòng DEBUG theo ý sếp để kiểm tra độ trễ của DB
     df_db = load_repair_data_final()
+
+    if not df_db.empty:
+    with st.expander("🛠️ DEBUG HỆ THỐNG (Dành cho sếp)"):
+        st.write("Dữ liệu mới nhất vừa ghi nhận từ Database:")
+        # Show 5 dòng mới nhất theo thời gian tạo hệ thống
+        st.write(df_db[['created_dt', 'machine_id', 'confirmed_dt']].head(5))
     tab_dash, tab_admin = st.tabs(["📊 BÁO CÁO VẬN HÀNH", "📥 QUẢN TRỊ"])
 
     # --- TAB 1: BÁO CÁO VẬN HÀNH ---
