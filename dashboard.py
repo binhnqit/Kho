@@ -12,20 +12,39 @@ supabase = create_client(url, key)
 # --- 2. HÀM XỬ LÝ (TRÁI TIM CỦA APP) ---
 @st.cache_data(ttl=60) # Tự động làm mới sau 1 phút để cập nhật ca mới nạp
 def load_repair_data_final():
-    res = supabase.table("repair_cases").select("*").execute()
-    df = pd.DataFrame(res.data)
-    
-    # 1. Ép kiểu Ngày xác nhận
-    df['date_dt'] = pd.to_datetime(df['confirmed_date'], errors='coerce')
-    
-    # 2. ÉP KIỂU TIỀN TỆ (QUAN TRỌNG): Biến 'false' thành 0 để tính tổng
-    df['CHI_PHÍ'] = pd.to_numeric(df['compensation'], errors='coerce').fillna(0)
-    
-    # 3. Trích xuất Năm/Tháng để lọc
-    df['NĂM'] = df['date_dt'].dt.year
-    df['THÁNG'] = df['date_dt'].dt.month
-    
-    return df
+    try:
+        res = supabase.table("repair_cases").select("*").execute()
+        if not res.data: 
+            return pd.DataFrame(columns=['date_dt', 'NĂM', 'THÁNG', 'THỨ', 'CHI_PHÍ', 'branch', 'machine_id'])
+        
+        df = pd.DataFrame(res.data)
+
+        # 1. Ép kiểu ngày từ confirmed_date
+        df['date_dt'] = pd.to_datetime(df['confirmed_date'], errors='coerce')
+        df = df.dropna(subset=['date_dt'])
+
+        # 2. TẠO CỘT 'THỨ' (Đây là cột đang bị thiếu gây lỗi KeyError)
+        day_map = {
+            'Monday': 'Thứ 2', 'Tuesday': 'Thứ 3', 'Wednesday': 'Thứ 4',
+            'Thursday': 'Thứ 5', 'Friday': 'Thứ 6', 'Saturday': 'Thứ 7', 'Sunday': 'Chủ Nhật'
+        }
+        df['THỨ'] = df['date_dt'].dt.day_name().map(day_map)
+
+        # 3. Trích xuất Năm/Tháng để khớp bộ lọc
+        df['NĂM'] = df['date_dt'].dt.year.astype(int)
+        df['THÁNG'] = df['date_dt'].dt.month.astype(int)
+
+        # 4. Ép kiểu tiền tệ (Biến 'false' thành 0)
+        df['CHI_PHÍ'] = pd.to_numeric(df['compensation'], errors='coerce').fillna(0)
+        
+        # 5. Chuẩn hóa chi nhánh
+        encoding_dict = {"Miá» n Trung": "Miền Trung", "Miá» n Báº¯c": "Miền Bắc", "Miá» n Nam": "Miền Nam"}
+        df['branch'] = df['branch'].replace(encoding_dict)
+
+        return df
+    except Exception as e:
+        st.error(f"Lỗi: {e}")
+        return pd.DataFrame()
 
 # --- 3. GIAO DIỆN ---
 def main():
