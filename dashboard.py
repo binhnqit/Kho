@@ -17,39 +17,31 @@ def load_repair_data_final():
         if not res.data: return pd.DataFrame()
         df = pd.DataFrame(res.data)
 
-        # 1. FIX CHI NHÁNH & BỎ DÒNG TRỐNG (Như sếp yêu cầu)
-        # Loại bỏ các dòng mà cột branch bị trống hoặc null
-        df = df.dropna(subset=['branch'])
-        df = df[df['branch'].str.strip() != ""] 
-
-        # Sửa lỗi font để gộp về đúng 3 miền
-        encoding_dict = {
-            "Miá» n Trung": "Miền Trung", "Miá» n Báº¯c": "Miền Bắc", "Miá» n Nam": "Miền Nam",
-            "Miá» n Báº°c": "Miền Bắc" # Dự phòng thêm ký tự lạ khác
-        }
-        df['branch'] = df['branch'].replace(encoding_dict)
-
-        # 2. FIX NGÀY THÁNG: ƯU TIÊN CỘT 5 (created_at) VÌ CỘT 2 ĐANG SAI (2223)
-        # Chúng ta dùng created_at để lấy đúng mốc năm 2026
-        df['date_dt'] = pd.to_datetime(df['created_at'], errors='coerce')
+        # 1. TRỌNG TÂM: Lấy ngày từ cột confirmed_date
+        df['date_dt'] = pd.to_datetime(df['confirmed_date'], errors='coerce')
         
-        # Bỏ qua các dòng không có ngày hợp lệ
+        # Loại bỏ các dòng không có ngày xác nhận hợp lệ
         df = df.dropna(subset=['date_dt'])
 
-        # Trích xuất Năm/Tháng/Thứ từ cột chuẩn
+        # 2. TRÍCH XUẤT THÔNG TIN THỜI GIAN ĐỂ LỌC
         df['NĂM'] = df['date_dt'].dt.year.astype(int)
         df['THÁNG'] = df['date_dt'].dt.month.astype(int)
+        
+        # Chuyển tên thứ sang tiếng Việt để vẽ biểu đồ
         day_map = {'Monday': 'Thứ 2', 'Tuesday': 'Thứ 3', 'Wednesday': 'Thứ 4',
                    'Thursday': 'Thứ 5', 'Friday': 'Thứ 6', 'Saturday': 'Thứ 7', 'Sunday': 'Chủ Nhật'}
         df['THỨ'] = df['date_dt'].dt.day_name().map(day_map)
 
-        # 3. FIX CHI PHÍ: ÉP KIỂU SỐ (Để không bị ra 0đ)
-        df['compensation'] = df['compensation'].apply(lambda x: 0 if str(x).lower() == 'false' else x)
+        # 3. CHUẨN HÓA SỐ TIỀN & CHI NHÁNH
         df['CHI_PHÍ'] = pd.to_numeric(df['compensation'], errors='coerce').fillna(0)
         
+        # Gộp các miền bị lỗi font (ví dụ: Miá» n Nam -> Miền Nam)
+        encoding_dict = {"Miá» n Trung": "Miền Trung", "Miá» n Báº¯c": "Miền Bắc", "Miá» n Nam": "Miền Nam"}
+        df['branch'] = df['branch'].replace(encoding_dict)
+
         return df
     except Exception as e:
-        st.error(f"Lỗi xử lý: {e}")
+        st.error(f"Lỗi tải dữ liệu: {e}")
         return pd.DataFrame()
 
 # --- 3. GIAO DIỆN ---
@@ -164,42 +156,51 @@ def main():
         # --- PHẦN 2: NHẬP LIỆU THỦ CÔNG (ĐÃ FIX UUID & BOOLEAN) ---
         with col_manual:
             st.subheader("✍️ Thêm ca sửa chữa mới")
-            with st.form("manual_entry_form", clear_on_submit=True):
+            # Sử dụng key duy nhất để tránh xung đột Form
+            with st.form(key="form_nhap_lieu_chuan_2026", clear_on_submit=True):
                 m_c1, m_c2 = st.columns(2)
                 with m_c1:
+                    # Ngày này sẽ là trục chính để lọc Dashboard
                     f_date = st.date_input("Ngày xác nhận", value=datetime.now())
                     f_branch = st.selectbox("Chi nhánh", ["Miền Bắc", "Miền Trung", "Miền Nam"])
                 with m_c2:
-                    # Nhập mã máy như '1366' vô tư vì đã đổi sang TEXT trong SQL
+                    # Đã ép kiểu String để tránh lỗi UUID cũ
                     f_machine = st.text_input("Mã số máy (Machine ID)") 
                     f_cost = st.number_input("Chi phí thực tế (đ)", min_value=0, step=10000)
 
                 f_customer = st.text_input("Tên khách hàng")
-                f_reason = st.text_area("Lý do hư hỏng", height=68)
+                # Để trống nếu không có lý do để tránh lệch dòng hiển thị
+                f_reason = st.text_area("Lý do hư hỏng", height=68, placeholder="Nhập chi tiết lỗi tại đây...")
                 
-                submit_manual = st.form_submit_button("💾 Lưu vào hệ thống", use_container_width=True)
+                submit_manual = st.form_submit_button("💾 Lưu vào hệ thống", use_container_width=True, type="primary")
 
                 if submit_manual:
                     if not f_machine or not f_customer:
-                        st.warning("⚠️ Sếp ơi, phải điền Mã máy và Tên khách mới lưu được!")
+                        st.warning("⚠️ Sếp ơi, Mã máy và Tên khách là bắt buộc!")
                     else:
                         try:
-                            # Chuẩn bị bản ghi gửi lên Supabase
+                            # 🛠️ ĐỒNG BỘ DỮ LIỆU ĐỂ KHÔNG LỆCH DÒNG
                             new_record = {
-                                "confirmed_date": f_date.isoformat(),
-                                "branch": f_branch,
-                                "machine_id": str(f_machine).strip(),
-                                "compensation": float(f_cost),
-                                "customer_name": f_customer,
-                                "issue_reason": f_reason,
-                                "created_at": datetime.now().isoformat()
+                                "confirmed_date": f_date.isoformat(), # Trục lọc chính
+                                "branch": f_branch,                   # Phân loại vùng miền
+                                "machine_id": str(f_machine).strip(), # Fix lỗi UUID
+                                "compensation": float(f_cost),        # Fix lỗi 0đ (Numeric)
+                                "customer_name": f_customer.strip(),
+                                "issue_reason": f_reason.strip() if f_reason else "N/A",
+                                "created_at": datetime.now().isoformat() # Ngày hệ thống
                             }
+                            
+                            # Gửi lên Supabase
                             res = supabase.table("repair_cases").insert(new_record).execute()
+                            
                             if res.data:
                                 st.success(f"✅ Đã lưu thành công ca máy: {f_machine}")
+                                # ⚡ Xóa cache để Tab Dashboard cập nhật ngay con số mới
                                 st.cache_data.clear()
+                                st.balloons()
                         except Exception as e:
-                            st.error(f"❌ Vẫn còn lỗi: {e}")
+                            # Cảnh báo nếu RLS hoặc kiểu dữ liệu vẫn chưa khớp hoàn toàn
+                            st.error(f"❌ Lỗi ghi dữ liệu: {e}")
 
         # --- PHẦN 3: BỘ CÔNG CỤ DỌN DẸP DỮ LIỆU ---
         st.divider()
