@@ -190,105 +190,113 @@ def main():
 
     # --- TAB 3: AI PHÂN TÍCH THÔNG MINH ---
     with tab_ai:
-        st.title("🤖 Trợ Lý Phân Tích Thông Minh")
+        st.title("🤖 Trợ Lý Phân Tích Thông Minh (Harden Version)")
         
-        if df_db.empty:
-            st.info("Cần có dữ liệu để AI thực hiện phân tích.")
-        else:
-            ai_sub1, ai_sub2, ai_sub3 = st.tabs(["🚨 CẢNH BÁO BẤT THƯỜNG", "🛠️ PHÂN TÍCH RỦI RO", "📈 DỰ BÁO & TÓM TẮT"])
+        # --- 1. KIỂM TRA ĐỘ TIN CẬY DỮ LIỆU (HARDEN DATA) ---
+        cost_series = df_db['CHI_PHÍ'].dropna()
+        if len(cost_series) < 10:
+            st.warning("⚠️ Dữ liệu hiện có (< 10 bản ghi) chưa đủ độ lệch chuẩn để AI phân tích tin cậy. Vui lòng nạp thêm dữ liệu.")
+            st.stop()
+            
+        ai_sub1, ai_sub2, ai_sub3 = st.tabs(["🚩 CẢNH BÁO RỦI RO", "🏗️ XẾP HẠNG THIẾT BỊ", "📊 DỰ BÁO CHI PHÍ"])
 
-            # --- 1. AI PHÁT HIỆN BẤT THƯỜNG (Anomaly Detection) ---
-            with ai_sub1:
-                st.subheader("🚩 Cảnh báo chi phí vượt ngưỡng (Statistical Anomaly)")
+        # --- SUB-TAB 1: PHÁT HIỆN BẤT THƯỜNG (FIX LOGIC) ---
+        with ai_sub1:
+            st.subheader("🚩 Phát hiện ca chi phí bất thường")
+            mean_cost = cost_series.mean()
+            std_cost = cost_series.std()
+            threshold = mean_cost + 2 * std_cost
+            
+            anomalies = df_db[df_db['CHI_PHÍ'] > threshold].copy()
+            
+            if not anomalies.empty:
+                st.error(f"Phát hiện {len(anomalies)} ca vượt ngưỡng an toàn (> {threshold:,.0f} đ)")
+                st.dataframe(anomalies[['confirmed_dt', 'branch', 'machine_id', 'CHI_PHÍ']], use_container_width=True)
+            else:
+                st.success("✅ Hệ thống ổn định: Chưa phát hiện ca nào vượt ngưỡng 2-sigma.")
+
+        # --- SUB-TAB 2: RISK SCORE (FIX NORMALIZATION) ---
+        with ai_sub2:
+            st.subheader("🏗️ Xếp hạng rủi ro (Normalized Score)")
+            
+            machine_stats = df_db.groupby('machine_id').agg(
+                so_lan_hong=('machine_id', 'count'),
+                tong_chi_phi=('CHI_PHÍ', 'sum')
+            ).reset_index()
+
+            # Chuẩn hóa (Normalize) về thang điểm 0-1 để so sánh công bằng
+            max_freq = machine_stats['so_lan_hong'].max()
+            max_total_cost = machine_stats['tong_chi_phi'].max()
+
+            machine_stats['freq_norm'] = machine_stats['so_lan_hong'] / max_freq
+            machine_stats['cost_norm'] = machine_stats['tong_chi_phi'] / max_total_cost
+
+            # Tính Risk Score theo trọng số sếp duyệt
+            machine_stats['risk_score'] = (
+                machine_stats['freq_norm'] * 0.6 + 
+                machine_stats['cost_norm'] * 0.4
+            ).round(2)
+
+            top_risk = machine_stats.sort_values('risk_score', ascending=False).head(10)
+            
+            col_chart, col_list = st.columns([6, 4])
+            with col_chart:
+                fig_risk = px.bar(top_risk, x='risk_score', y='machine_id', orientation='h',
+                                 title="Top 10 Máy Cần Thay Thế/Bảo Trì",
+                                 color='risk_score', color_continuous_scale='OrRd')
+                st.plotly_chart(fig_risk, use_container_width=True)
+            with col_list:
+                st.write("📋 Chỉ số rủi ro:")
+                st.dataframe(top_risk[['machine_id', 'risk_score', 'so_lan_hong']], hide_index=True)
+
+        # --- SUB-TAB 3: DỰ BÁO (FIX DIVISION BY ZERO & LATEST MONTH) ---
+        with ai_sub3:
+            st.subheader("📊 Dự báo ngân sách & Tóm tắt")
+            
+            # Group theo thời gian thực tế
+            monthly_data = df_db.groupby(['NĂM', 'THÁNG'])['CHI_PHÍ'].sum().reset_index()
+            
+            if len(monthly_data) >= 2:
+                # Rolling 3 tháng
+                forecast_value = monthly_data['CHI_PHÍ'].rolling(window=3, min_periods=1).mean().iloc[-1]
+                # FIX: Lấy tháng mới nhất chuẩn MAX
+                current_month_cost = monthly_data.sort_values(['NĂM', 'THÁNG']).iloc[-1]['CHI_PHÍ']
                 
-                # Tính toán ngưỡng dựa trên Độ lệch chuẩn (Z-score logic)
-                mean_cost = df_db['CHI_PHÍ'].mean()
-                std_cost = df_db['CHI_PHÍ'].std()
-                threshold = mean_cost + 2 * std_cost # Ngưỡng 2-sigma
+                # FIX: Bọc chia cho 0
+                diff_pct = ((forecast_value / current_month_cost) - 1) * 100 if current_month_cost > 0 else 0
                 
-                anomalies = df_db[df_db['CHI_PHÍ'] > threshold].copy()
-                
-                if not anomalies.empty:
-                    st.error(f"Phát hiện {len(anomalies)} ca có chi phí cao bất thường (> {threshold:,.0f} đ)")
-                    st.dataframe(
-                        anomalies[['confirmed_dt', 'branch', 'machine_id', 'CHI_PHÍ', 'customer_name']],
-                        use_container_width=True
-                    )
+                c1, c2 = st.columns(2)
+                c1.metric("Dự báo chi phí tháng tới", f"{forecast_value:,.0f} đ")
+                c2.metric("Biến động so với hiện tại", f"{diff_pct:.1f}%", delta=f"{diff_pct:.1f}%", delta_color="inverse")
+
+            # --- SMART CHAT LAYER (NLP NHẸ) ---
+            st.divider()
+            user_q = st.text_input("💬 Hỏi trợ lý AI (Ví dụ: 'Máy nào hỏng ở Miền Nam?')")
+            
+            if user_q:
+                # Layer xử lý ngôn ngữ tự nhiên đơn giản (NLP Parser)
+                def parse_question(q):
+                    q = q.lower()
+                    params = {}
+                    if "miền bắc" in q or "ngoài bắc" in q: params["branch"] = "Miền Bắc"
+                    if "miền nam" in q or "trong nam" in q: params["branch"] = "Miền Nam"
+                    if "miền trung" in q: params["branch"] = "Miền Trung"
+                    return params
+
+                filters = parse_question(user_q)
+                if filters:
+                    filtered_df = df_db.copy()
+                    for k, v in filters.items():
+                        filtered_df = filtered_df[filtered_df[k] == v]
                     
-                    # Giải thích logic AI cho sếp yên tâm
-                    st.caption(f"💡 AI định nghĩa 'Bất thường' là các ca có chi phí cao hơn mức trung bình ({mean_cost:,.0f} đ) cộng với 2 lần độ lệch chuẩn.")
+                    if not filtered_df.empty:
+                        top_m = filtered_df['machine_id'].value_counts().idxmax()
+                        count_m = filtered_df['machine_id'].value_counts().max()
+                        st.info(f"🤖 Phân tích vùng **{filters.get('branch')}**: Máy **{top_m}** đang có tần suất hỏng cao nhất ({count_m} lần).")
+                    else:
+                        st.warning("🤖 Không tìm thấy dữ liệu phù hợp cho vùng này.")
                 else:
-                    st.success("✅ Chưa phát hiện ca nào có dấu hiệu trục lợi hoặc sai số chi phí lớn.")
-
-            # --- 2. AI XẾP HẠNG RỦI RO MÁY MÓC (Risk Scoring) ---
-            with ai_sub2:
-                st.subheader("🏗️ Xếp hạng rủi ro thiết bị (Machine Risk Score)")
-                
-                # Tính Risk Score = 60% Tần suất + 40% Chi phí
-                machine_stats = df_db.groupby('machine_id').agg(
-                    so_lan_hong=('machine_id', 'count'),
-                    tong_chi_phi=('CHI_PHÍ', 'sum')
-                ).reset_index()
-                
-                max_cost = machine_stats['tong_chi_phi'].max() if not machine_stats.empty else 1
-                machine_stats['risk_score'] = (
-                    (machine_stats['so_lan_hong'] * 0.6) + 
-                    (machine_stats['tong_chi_phi'] / max_cost * 0.4)
-                ).round(2)
-                
-                top_risk = machine_stats.sort_values('risk_score', ascending=False).head(10)
-                
-                col_r1, col_r2 = st.columns([6, 4])
-                with col_r1:
-                    fig_risk = px.bar(top_risk, x='risk_score', y='machine_id', orientation='h',
-                                     title="Top 10 Máy Rủi Ro Cao Nhất",
-                                     color='risk_score', color_continuous_scale='Reds')
-                    st.plotly_chart(fig_risk, use_container_width=True)
-                
-                with col_r2:
-                    st.write("📋 Danh sách máy cần bảo trì ngay:")
-                    st.dataframe(top_risk[['machine_id', 'risk_score']], hide_index=True)
-
-            # --- 3. DỰ BÁO & TÓM TẮT TỰ ĐỘNG ---
-            with ai_sub3:
-                st.subheader("🔮 Dự báo ngân sách & Tóm tắt")
-                
-                # Tính dự báo Rolling Mean 3 tháng
-                monthly_data = df_db.groupby(['NĂM', 'THÁNG'])['CHI_PHÍ'].sum().reset_index()
-                if len(monthly_data) >= 2:
-                    forecast_value = monthly_data['CHI_PHÍ'].rolling(window=3, min_periods=1).mean().iloc[-1]
-                    current_month_cost = monthly_data['CHI_PHÍ'].iloc[-1]
-                    diff_pct = ((forecast_value / current_month_cost) - 1) * 100
-                    
-                    c1, c2 = st.columns(2)
-                    c1.metric("Dự báo ngân sách tháng tới", f"{forecast_value:,.0f} đ")
-                    c2.metric("Biến động dự kiến", f"{diff_pct:.1f}%", delta=f"{diff_pct:.1f}%", delta_color="inverse")
-                
-                st.divider()
-                
-                # AI Report Summary (Logic mẫu)
-                if st.button("🧠 AI TÓM TẮT BÁO CÁO THÁNG NÀY"):
-                    latest_month = df_db['THÁNG'].iloc[0]
-                    month_df = df_db[df_db['THÁNG'] == latest_month]
-                    
-                    summary_text = f"""
-                    **BÁO CÁO NHANH THÁNG {latest_month}/2026:**
-                    - **Tổng quan:** Hệ thống ghi nhận {len(month_df)} ca sửa chữa với tổng chi phí {month_df['CHI_PHÍ'].sum():,.0f} đ.
-                    - **Điểm nóng:** Chi nhánh **{month_df['branch'].value_counts().idxmax()}** có tần suất sửa chữa cao nhất.
-                    - **Rủi ro:** Phát hiện máy **{month_df['machine_id'].value_counts().idxmax()}** lặp lại sự cố nhiều lần.
-                    - **Khuyến nghị:** Cần rà soát lại quy trình vận hành tại các chi nhánh có chi phí vượt ngưỡng 2-sigma.
-                    """
-                    st.info(summary_text)
-
-                # Ô chat hỏi đáp dữ liệu (UI Placeholder - Giai đoạn tiếp theo kết nối LLM)
-                st.divider()
-                user_q = st.text_input("💬 Hỏi Trợ lý AI về dữ liệu (Ví dụ: Máy nào hỏng nhiều nhất ở Miền Bắc?)")
-                if user_q:
-                    st.write("🤖 *AI đang phân tích DataFrame...*")
-                    # Chỗ này sếp có thể tích hợp LangChain hoặc đơn giản là lọc chuỗi (Regex)
-                    if "miền bắc" in user_q.lower():
-                        mb_data = df_db[df_db['branch'] == 'Miền Bắc']['machine_id'].value_counts().head(1)
-                        st.write(f"Dạ, ở Miền Bắc máy **{mb_data.index[0]}** đang hỏng nhiều nhất ({mb_data.values[0]} lần) sếp nhé!")
+                    st.write("🤖 Sếp thử hỏi về cụ thể chi nhánh (Bắc/Trung/Nam) để em lọc nhé!")
     with tab_admin:
         st.title("📥 HỆ THỐNG QUẢN TRỊ DỮ LIỆU")
         
