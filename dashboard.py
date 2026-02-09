@@ -130,119 +130,52 @@ def main():
         # Chia 2 cột: Một bên nạp file, một bên nhập tay
         col_import, col_manual = st.columns([1, 1])
 
-        # --- PHẦN 1: IMPORT FILE CSV ---
+        # --- PHẦN 1: IMPORT FILE CSV (Dành cho nạp data lớn) ---
         with col_import:
             st.subheader("📂 Import từ File CSV")
-            st.info("💡 Mẹo: File CSV nên có cột `machine_id`, `branch`, `compensation`...")
+            st.info("💡 Mẹo: File nên có cột `machine_id`, `branch`, `compensation`, `confirmed_date`...")
             uploaded_file = st.file_uploader("Chọn file CSV", type=["csv"], key="csv_upload")
             
             if uploaded_file:
                 df_up = pd.read_csv(uploaded_file)
                 
-                # Tiền xử lý dữ liệu trước khi đẩy lên Cloud
+                # 1. Xử lý Ngày Nghiệp vụ: Ép kiểu và xóa rác
+                if 'confirmed_date' in df_up.columns:
+                    df_up['confirmed_date'] = pd.to_datetime(df_up['confirmed_date'], errors='coerce').dt.strftime('%Y-%m-%d')
+                
+                # 2. Xử lý Chi phí: Ép về Numeric (Fix lỗi Boolean 'false')
                 if 'compensation' in df_up.columns:
                     df_up['compensation'] = pd.to_numeric(df_up['compensation'], errors='coerce').fillna(0).astype(float)
                 
-                # Đảm bảo machine_id là dạng chữ (tránh lỗi UUID cũ)
+                # 3. Gắn nhãn Ngày Hệ thống: Để Dashboard biết đây là dữ liệu mới nạp
+                df_up['created_at'] = datetime.now().isoformat()
+                
+                # 4. Đảm bảo machine_id là dạng chữ (tránh lỗi định dạng UUID)
                 if 'machine_id' in df_up.columns:
                     df_up['machine_id'] = df_up['machine_id'].astype(str)
                 
-                st.write("👀 Xem trước 3 dòng:")
+                st.write("👀 Xem trước dữ liệu chuẩn bị nạp:")
                 st.dataframe(df_up.head(3), use_container_width=True)
                 
-                if st.button("🚀 Xác nhận Upload", use_container_width=True, type="primary"):
+                if st.button("🚀 Xác nhận Upload lên Cloud", use_container_width=True, type="primary"):
                     try:
                         data_to_upsert = df_up.to_dict(orient='records')
                         res = supabase.table("repair_cases").upsert(data_to_upsert).execute()
                         if res.data:
                             st.success(f"✅ Đã nạp {len(res.data)} dòng thành công!")
-                            st.cache_data.clear() # Xóa cache để dashboard cập nhật
+                            st.cache_data.clear() # Xóa cache để dashboard thấy data mới ngay
                             st.balloons()
                     except Exception as e:
                         st.error(f"❌ Lỗi nạp dữ liệu: {e}")
 
-        # --- PHẦN 2: NHẬP LIỆU THỦ CÔNG (ĐÃ FIX UUID & BOOLEAN) ---
+        # --- PHẦN 2: NHẬP TAY (Dành cho ca phát sinh hàng ngày) ---
         with col_manual:
             st.subheader("✍️ Thêm ca sửa chữa mới")
-            # Sử dụng key duy nhất để tránh xung đột Form
-            with st.form(key="form_nhap_lieu_chuan_2026", clear_on_submit=True):
+            # Dùng key duy nhất để tránh lỗi Duplicate Form
+            with st.form("manual_entry_form_v3", clear_on_submit=True):
                 m_c1, m_c2 = st.columns(2)
                 with m_c1:
-                    # Ngày này sẽ là trục chính để lọc Dashboard
-                    f_date = st.date_input("Ngày xác nhận", value=datetime.now())
-                    f_branch = st.selectbox("Chi nhánh", ["Miền Bắc", "Miền Trung", "Miền Nam"])
-                with m_c2:
-                    # Đã ép kiểu String để tránh lỗi UUID cũ
-                    f_machine = st.text_input("Mã số máy (Machine ID)") 
-                    f_cost = st.number_input("Chi phí thực tế (đ)", min_value=0, step=10000)
-
-                f_customer = st.text_input("Tên khách hàng")
-                # Để trống nếu không có lý do để tránh lệch dòng hiển thị
-                f_reason = st.text_area("Lý do hư hỏng", height=68, placeholder="Nhập chi tiết lỗi tại đây...")
-                
-                submit_manual = st.form_submit_button("💾 Lưu vào hệ thống", use_container_width=True, type="primary")
-
-                if submit_manual:
-                    if not f_machine or not f_customer:
-                        st.warning("⚠️ Sếp ơi, Mã máy và Tên khách là bắt buộc!")
-                    else:
-                        try:
-                            # 🛠️ ĐỒNG BỘ DỮ LIỆU ĐỂ KHÔNG LỆCH DÒNG
-                            new_record = {
-                                "confirmed_date": f_date.isoformat(), # Trục lọc chính
-                                "branch": f_branch,                   # Phân loại vùng miền
-                                "machine_id": str(f_machine).strip(), # Fix lỗi UUID
-                                "compensation": float(f_cost),        # Fix lỗi 0đ (Numeric)
-                                "customer_name": f_customer.strip(),
-                                "issue_reason": f_reason.strip() if f_reason else "N/A",
-                                "created_at": datetime.now().isoformat() # Ngày hệ thống
-                            }
-                            
-                            # Gửi lên Supabase
-                            res = supabase.table("repair_cases").insert(new_record).execute()
-                            
-                            if res.data:
-                                st.success(f"✅ Đã lưu thành công ca máy: {f_machine}")
-                                # ⚡ Xóa cache để Tab Dashboard cập nhật ngay con số mới
-                                st.cache_data.clear()
-                                st.balloons()
-                        except Exception as e:
-                            # Cảnh báo nếu RLS hoặc kiểu dữ liệu vẫn chưa khớp hoàn toàn
-                            st.error(f"❌ Lỗi ghi dữ liệu: {e}")
-
-        # --- PHẦN 3: BỘ CÔNG CỤ DỌN DẸP DỮ LIỆU ---
-        st.divider()
-        with st.expander("🛠️ CÔNG CỤ DỌN DẸP HỆ THỐNG (ADMIN ONLY)"):
-            st.warning("Cẩn thận: Các thao tác này sẽ thay đổi dữ liệu trực tiếp trên Cloud.")
-            c_clean1, c_clean2, c_clean3 = st.columns(3)
-            
-            with c_clean1:
-                if st.button("🧹 Xóa dòng 'Trống chi nhánh'"):
-                    # Xóa các ca mà branch là null do sếp thấy trong SQL trước đó
-                    supabase.table("repair_cases").delete().is_("branch", "null").execute()
-                    st.info("Đã quét sạch dòng trống!")
-                    st.cache_data.clear()
-            
-            with c_clean2:
-                if st.button("🔠 Sửa lỗi Font 3 Miền"):
-                    # Tự động gộp các miền lỗi font về tên chuẩn để Dashboard hiện đúng số 3
-                    maps = {"Miá» n Nam": "Miền Nam", "Miá» n Trung": "Miền Trung", "Miá» n Báº¯c": "Miền Bắc"}
-                    for old, new in maps.items():
-                        supabase.table("repair_cases").update({"branch": new}).eq("branch", old).execute()
-                    st.success("Đã chuẩn hóa tên miền!")
-                    st.cache_data.clear()
-
-            with c_clean3:
-                if st.button("♻️ Làm mới toàn bộ App"):
-                    st.cache_data.clear()
-                    st.rerun()
-        # --- PHẦN 2: NHẬP THỦ CÔNG (ĐÃ FIX LỖI 22P02) ---
-        with col_manual:
-            st.subheader("✍️ Thêm ca sửa chữa mới")
-            # Đổi key thành 'form_quan_tri_2026' để không bao giờ trùng
-            with st.form(key="form_quan_tri_2026", clear_on_submit=True):
-                m_c1, m_c2 = st.columns(2)
-                with m_c1:
+                    # Ngày xác nhận = Ngày Nghiệp vụ (Dùng để lọc Dashboard)
                     f_date = st.date_input("Ngày xác nhận", value=datetime.now())
                     f_branch = st.selectbox("Chi nhánh", ["Miền Bắc", "Miền Trung", "Miền Nam"])
                 with m_c2:
@@ -252,52 +185,28 @@ def main():
                 f_customer = st.text_input("Tên khách hàng")
                 f_reason = st.text_area("Lý do hư hỏng", height=68)
                 
-                # Nút bấm cũng nên có style primary cho chuyên nghiệp
-                submit_manual = st.form_submit_button("💾 Lưu vào hệ thống", use_container_width=True, type="primary")
+                submit_manual = st.form_submit_button("💾 Lưu vào hệ thống", use_container_width=True)
 
                 if submit_manual:
                     if not f_machine or not f_customer:
-                        st.warning("⚠️ Sếp điền thiếu thông tin rồi!")
+                        st.warning("⚠️ Sếp điền thiếu Mã máy hoặc Tên khách rồi!")
                     else:
                         try:
                             new_record = {
-                                "confirmed_date": f_date.isoformat(),
+                                "confirmed_date": f_date.isoformat(),   # Nghiệp vụ
                                 "branch": f_branch,
                                 "machine_id": str(f_machine).strip(),
                                 "compensation": float(f_cost),
                                 "customer_name": f_customer,
                                 "issue_reason": f_reason,
-                                "created_at": datetime.now().isoformat()
+                                "created_at": datetime.now().isoformat() # Hệ thống (Dùng để sắp xếp)
                             }
                             res = supabase.table("repair_cases").insert(new_record).execute()
                             if res.data:
                                 st.success(f"✅ Đã lưu thành công ca máy: {f_machine}")
                                 st.cache_data.clear()
                         except Exception as e:
-                            st.error(f"❌ Vẫn còn lỗi: {e}")
-
-        # --- PHẦN 3: CÔNG CỤ DỌN RÁC SIÊU MẠNH ---
-        st.divider()
-        with st.expander("🛠️ CÔNG CỤ QUẢN TRỊ NÂNG CAO"):
-            st.warning("Cẩn thận: Các thao tác này sẽ thay đổi dữ liệu trực tiếp trên Cloud.")
-            
-            c_clean1, c_clean2 = st.columns(2)
-            
-            with c_clean1:
-                if st.button("🧹 Xóa ca 'Chi nhánh trống'"):
-                    res = supabase.table("repair_cases").delete().is_("branch", "null").execute()
-                    st.info(f"Đã dọn dẹp các dòng lỗi!")
-                    st.cache_data.clear()
-            
-            with c_clean2:
-                # Công cụ này giúp sếp fix lỗi font hàng loạt bằng SQL ẩn
-                if st.button("🔠 Sửa lỗi Font hàng loạt"):
-                    st.write("Đang quét và sửa lỗi font...")
-                    # Sửa lỗi font trực tiếp cho 3 miền
-                    for old, new in {"Miá» n Nam": "Miền Nam", "Miá» n Trung": "Miền Trung", "Miá» n Báº¯c": "Miền Bắc"}.items():
-                        supabase.table("repair_cases").update({"branch": new}).eq("branch", old).execute()
-                    st.success("Đã chuẩn hóa tên chi nhánh!")
-                    st.cache_data.clear()
+                            st.error(f"❌ Lỗi: {e}")
 
 if __name__ == "__main__":
     main()
