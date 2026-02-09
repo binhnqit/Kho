@@ -19,10 +19,10 @@ def load_repair_data_final():
         
         df = pd.DataFrame(res.data)
 
-        # 1. PHÂN TÁCH HAI LOẠI THỜI GIAN
+        # 1. PHÂN TÁCH HAI LOẠI THỜI GIAN THEO CHUẨN NGHIỆP VỤ
         # confirmed_dt dùng cho KPI, Xu hướng, Bộ lọc
         df['confirmed_dt'] = pd.to_datetime(df['confirmed_date'], errors='coerce')
-        # created_dt dùng để sắp xếp thứ tự nhập liệu
+        # created_dt dùng để sắp xếp thứ tự nhập liệu hệ thống
         df['created_dt']   = pd.to_datetime(df['created_at'], errors='coerce')
         
         # Loại bỏ rác nếu không có ngày nghiệp vụ
@@ -37,37 +37,31 @@ def load_repair_data_final():
         df['THỨ'] = df['confirmed_dt'].dt.day_name().map(day_map)
 
         # 3. CHUẨN HÓA DỮ LIỆU SỐ & CHI NHÁNH
+        # Ép kiểu để sum() không bị lỗi 0đ
         df['CHI_PHÍ'] = pd.to_numeric(df['compensation'], errors='coerce').fillna(0)
         encoding_dict = {"Miá» n Trung": "Miền Trung", "Miá» n Báº¯c": "Miền Bắc", "Miá» n Nam": "Miền Nam"}
         df['branch'] = df['branch'].replace(encoding_dict)
 
-        # 4. SẮP XẾP THEO HỆ THỐNG (Mới nhập hiện lên đầu)
+        # 4. SẮP XẾP THEO HỆ THỐNG (Mới nhập hiện lên đầu - Không lo dậm chân tại chỗ)
         df = df.sort_values(by='created_dt', ascending=False)
 
         return df
     except Exception as e:
-        st.error(f"Lỗi logic: {e}")
-        return pd.DataFrame()
-    except Exception as e:
-        st.error(f"Lỗi: {e}")
+        st.error(f"Lỗi logic tải data: {e}")
         return pd.DataFrame()
 
-# --- 3. GIAO DIỆN ---
+# --- 3. GIAO DIỆN CHÍNH ---
 def main():
     st.set_page_config(page_title="4ORANGES OPS 2026", layout="wide", page_icon="🎨")
     
-    # 1. LOAD DỮ LIỆU CHUNG (Dùng chung cho cả 2 Tab)
     df_db = load_repair_data_final()
-    
-    # 2. KHỞI TẠO TABS
     tab_dash, tab_admin = st.tabs(["📊 BÁO CÁO VẬN HÀNH", "📥 QUẢN TRỊ"])
 
     # --- TAB 1: BÁO CÁO VẬN HÀNH ---
     with tab_dash:
         if df_db.empty:
-            st.info("Chưa có dữ liệu hợp lệ. Vui lòng kiểm tra lại Database hoặc nạp dữ liệu ở Tab Quản trị.")
+            st.info("Chưa có dữ liệu. Vui lòng nạp ở Tab Quản trị.")
         else:
-            # --- A. SIDEBAR (Chỉ hiện khi ở Tab Báo cáo) ---
             with st.sidebar:
                 st.header("⚙️ BỘ LỌC")
                 if st.button("🔄 LÀM MỚI DỮ LIỆU", use_container_width=True):
@@ -75,24 +69,21 @@ def main():
                     st.rerun()
                 st.divider()
                 
-                # Logic chọn Năm/Tháng
                 available_years = sorted(df_db['NĂM'].unique(), reverse=True)
                 sel_year = st.selectbox("📅 Chọn năm", options=available_years, key="year_filter")
                 
                 available_months = sorted(df_db[df_db['NĂM'] == sel_year]['THÁNG'].unique().tolist())
                 sel_month = st.selectbox("📆 Chọn tháng", options=["Tất cả"] + available_months, key="month_filter")
 
-            # --- B. LỌC DỮ LIỆU VIEW ---
+            # Lọc view dựa trên confirmed_dt
             df_view = df_db[df_db['NĂM'] == sel_year].copy()
             if sel_month != "Tất cả":
                 df_view = df_view[df_view['THÁNG'] == sel_month]
 
-            # --- C. HIỂN THỊ KPI ---
             month_label = f"Tháng {sel_month}" if sel_month != "Tất cả" else "Cả năm"
             st.title(f"📈 Báo cáo vận hành {month_label} / {sel_year}")
             
             c1, c2, c3 = st.columns(3)
-            # Dữ liệu CHI_PHÍ đã được ép kiểu numeric trong SQL nên sum() sẽ ra kết quả chuẩn
             c1.metric("💰 TỔNG CHI PHÍ", f"{df_view['CHI_PHÍ'].sum():,.0f} đ")
             c2.metric("🛠️ SỐ CA SỬA CHỮA", f"{len(df_view)} ca")
             top_branch = df_view['branch'].value_counts().idxmax() if not df_view.empty else "N/A"
@@ -100,7 +91,6 @@ def main():
 
             st.divider()
 
-            # --- D. BIỂU ĐỒ & BẢNG ---
             col_chart, col_table = st.columns([6, 4])
             with col_chart:
                 st.subheader("📅 Xu hướng sự vụ theo thứ")
@@ -108,105 +98,84 @@ def main():
                 day_stats = df_view['THỨ'].value_counts().reindex(order).fillna(0).reset_index()
                 day_stats.columns = ['THỨ', 'SỐ_CA']
                 fig = px.line(day_stats, x='THỨ', y='SỐ_CA', markers=True, color_discrete_sequence=['#00CC96'])
-                fig.update_layout(height=350, margin=dict(l=20, r=20, t=20, b=20))
                 st.plotly_chart(fig, use_container_width=True)
 
             with col_table:
                 st.subheader("📋 10 ca mới cập nhật")
-                # Hiển thị mã máy vừa nạp (ví dụ 1366) ở ngay đây
+                # FIX LỖI KEYERROR: Đổi date_dt -> confirmed_dt và sort theo created_dt
                 st.dataframe(
-                    df_view.sort_values('date_dt', ascending=False).head(10)[['date_dt', 'branch', 'machine_id', 'CHI_PHÍ']],
+                    df_view.sort_values('created_dt', ascending=False).head(10)[['confirmed_dt', 'branch', 'machine_id', 'CHI_PHÍ']],
                     use_container_width=True, hide_index=True
                 )
 
             with st.expander("🔎 Xem toàn bộ dữ liệu chi tiết đã lọc"):
-                st.dataframe(df_view.sort_values('date_dt', ascending=False), use_container_width=True)
+                st.dataframe(df_view.sort_values('created_dt', ascending=False), use_container_width=True)
 
-    # --- TAB 2: QUẢN TRỊ (Phần sếp vừa yêu cầu) ---
-    
+    # --- TAB 2: QUẢN TRỊ ---
     with tab_admin:
         st.title("📥 HỆ THỐNG QUẢN TRỊ DỮ LIỆU")
-        
-        # Chia 2 cột: Một bên nạp file, một bên nhập tay
         col_import, col_manual = st.columns([1, 1])
 
-        # --- PHẦN 1: IMPORT FILE CSV (Dành cho nạp data lớn) ---
         with col_import:
             st.subheader("📂 Import từ File CSV")
-            st.info("💡 Mẹo: File nên có cột `machine_id`, `branch`, `compensation`, `confirmed_date`...")
             uploaded_file = st.file_uploader("Chọn file CSV", type=["csv"], key="csv_upload")
-            
             if uploaded_file:
                 df_up = pd.read_csv(uploaded_file)
-                
-                # 1. Xử lý Ngày Nghiệp vụ: Ép kiểu và xóa rác
                 if 'confirmed_date' in df_up.columns:
                     df_up['confirmed_date'] = pd.to_datetime(df_up['confirmed_date'], errors='coerce').dt.strftime('%Y-%m-%d')
-                
-                # 2. Xử lý Chi phí: Ép về Numeric (Fix lỗi Boolean 'false')
                 if 'compensation' in df_up.columns:
-                    df_up['compensation'] = pd.to_numeric(df_up['compensation'], errors='coerce').fillna(0).astype(float)
+                    df_up['compensation'] = pd.to_numeric(df_up['compensation'], errors='coerce').fillna(0)
                 
-                # 3. Gắn nhãn Ngày Hệ thống: Để Dashboard biết đây là dữ liệu mới nạp
-                df_up['created_at'] = datetime.now().isoformat()
+                df_up['created_at'] = datetime.now().isoformat() # Đánh dấu thời gian nạp hệ thống
                 
-                # 4. Đảm bảo machine_id là dạng chữ (tránh lỗi định dạng UUID)
-                if 'machine_id' in df_up.columns:
-                    df_up['machine_id'] = df_up['machine_id'].astype(str)
-                
-                st.write("👀 Xem trước dữ liệu chuẩn bị nạp:")
+                st.write("👀 Xem trước:")
                 st.dataframe(df_up.head(3), use_container_width=True)
                 
-                if st.button("🚀 Xác nhận Upload lên Cloud", use_container_width=True, type="primary"):
+                if st.button("🚀 Xác nhận Upload", use_container_width=True, type="primary"):
                     try:
-                        data_to_upsert = df_up.to_dict(orient='records')
-                        res = supabase.table("repair_cases").upsert(data_to_upsert).execute()
+                        res = supabase.table("repair_cases").upsert(df_up.to_dict(orient='records')).execute()
                         if res.data:
                             st.success(f"✅ Đã nạp {len(res.data)} dòng thành công!")
-                            st.cache_data.clear() # Xóa cache để dashboard thấy data mới ngay
-                            st.balloons()
+                            st.cache_data.clear()
+                            st.rerun()
                     except Exception as e:
-                        st.error(f"❌ Lỗi nạp dữ liệu: {e}")
+                        st.error(f"Lỗi: {e}")
 
-        # --- PHẦN 2: NHẬP TAY (Dành cho ca phát sinh hàng ngày) ---
         with col_manual:
-            st.subheader("✍️ Thêm ca sửa chữa mới")
-            # Dùng key duy nhất để tránh lỗi Duplicate Form
-            with st.form("manual_entry_form_v3", clear_on_submit=True):
+            st.subheader("✍️ Nhập tay ca mới")
+            with st.form("manual_entry_form_pro", clear_on_submit=True):
                 m_c1, m_c2 = st.columns(2)
                 with m_c1:
-                    # Ngày xác nhận = Ngày Nghiệp vụ (Dùng để lọc Dashboard)
-                    f_date = st.date_input("Ngày xác nhận", value=datetime.now())
+                    f_date = st.date_input("Ngày xác nhận (Nghiệp vụ)", value=datetime.now())
                     f_branch = st.selectbox("Chi nhánh", ["Miền Bắc", "Miền Trung", "Miền Nam"])
                 with m_c2:
-                    f_machine = st.text_input("Mã số máy (Machine ID)") 
+                    f_machine = st.text_input("Mã số máy") 
                     f_cost = st.number_input("Chi phí thực tế (đ)", min_value=0, step=10000)
 
                 f_customer = st.text_input("Tên khách hàng")
-                f_reason = st.text_area("Lý do hư hỏng", height=68)
+                f_reason = st.text_area("Lý do hư hỏng")
                 
-                submit_manual = st.form_submit_button("💾 Lưu vào hệ thống", use_container_width=True)
-
-                if submit_manual:
+                if st.form_submit_button("💾 Lưu vào hệ thống", use_container_width=True):
                     if not f_machine or not f_customer:
-                        st.warning("⚠️ Sếp điền thiếu Mã máy hoặc Tên khách rồi!")
+                        st.warning("⚠️ Điền thiếu thông tin rồi sếp!")
                     else:
                         try:
                             new_record = {
-                                "confirmed_date": f_date.isoformat(),   # Nghiệp vụ
+                                "confirmed_date": f_date.isoformat(),
                                 "branch": f_branch,
                                 "machine_id": str(f_machine).strip(),
                                 "compensation": float(f_cost),
                                 "customer_name": f_customer,
                                 "issue_reason": f_reason,
-                                "created_at": datetime.now().isoformat() # Hệ thống (Dùng để sắp xếp)
+                                "created_at": datetime.now().isoformat() # Hệ thống time
                             }
                             res = supabase.table("repair_cases").insert(new_record).execute()
                             if res.data:
-                                st.success(f"✅ Đã lưu thành công ca máy: {f_machine}")
+                                st.success("✅ Đã lưu!")
                                 st.cache_data.clear()
+                                st.rerun()
                         except Exception as e:
-                            st.error(f"❌ Lỗi: {e}")
+                            st.error(f"Lỗi: {e}")
 
 if __name__ == "__main__":
     main()
