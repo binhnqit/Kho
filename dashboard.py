@@ -57,7 +57,10 @@ def main():
     st.set_page_config(page_title="4ORANGES OPS 2026", layout="wide", page_icon="🎨")
     tab_dash, tab_admin = st.tabs(["📊 BÁO CÁO VẬN HÀNH", "📥 QUẢN TRỊ"])
 
-    with tab_dash:
+    if st.button("🚀 CẬP NHẬT SỐ LIỆU MỚI NHẤT"):
+            st.cache_data.clear()
+            st.rerun()
+
         df_db = load_repair_data_final()
         
         if df_db.empty:
