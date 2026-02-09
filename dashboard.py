@@ -64,78 +64,67 @@ def log_import_audit(source, rows, user="Admin"):
 def main():
     st.set_page_config(page_title="4ORANGES PRO OPS", layout="wide")
     
+    # 👉 FIX LỖI TẠI ĐÂY: Khởi tạo tabs trước khi sử dụng
     tab_dash, tab_admin = st.tabs(["📊 BÁO CÁO VẬN HÀNH", "📥 NHẬP DỮ LIỆU & UPLOAD"])
 
     # --- TAB 1: DASHBOARD ---
-# --- TRONG TAB DASHBOARD ---
-with tab_dash:
-    df_db = load_repair_data_final()
-    
-    if df_db.empty:
-        st.warning("⚠️ Database chưa có dữ liệu")
-    else:
-        # 1. SIDEBAR FILTER PANEL
-        with st.sidebar:
-            st.markdown("## ⚙️ LỌC DỮ LIỆU")
-            
-            # Lấy danh sách năm chuẩn từ dữ liệu thực tế
-            years = sorted(df_db['NĂM'].unique(), reverse=True)
-            
-            with st.form("filter_form"):
-                sel_year = st.selectbox(
-                    "📅 Năm báo cáo",
-                    options=years,
-                    index=0 # Luôn chọn năm lớn nhất (mới nhất)
-                )
-
-                # Lọc tháng theo năm đã chọn
-                available_months = sorted(df_db[df_db['NĂM'] == sel_year]['THÁNG'].unique().tolist())
-                months_options = ["Tất cả"] + available_months
-
-                sel_month = st.selectbox(
-                    "📆 Tháng",
-                    options=months_options,
-                    index=0
-                )
-
-                apply_filter = st.form_submit_button("🔍 Áp dụng bộ lọc")
-
-        # 2. LOGIC XỬ LÝ DỮ LIỆU (FIX LOAD LẦN ĐẦU)
-        # Nếu chưa bấm nút, hoặc đã bấm nút: đều phải có dữ liệu mặc định
-        if apply_filter:
-            df_view = df_db[df_db['NĂM'] == sel_year].copy()
-            if sel_month != "Tất cả":
-                df_view = df_view[df_view['THÁNG'] == sel_month]
-        else:
-            # MẶC ĐỊNH KHI MỚI MỞ APP: Lấy năm mới nhất (index 0)
-            default_year = years[0]
-            df_view = df_db[df_db['NĂM'] == default_year].copy()
-            # Cập nhật lại biến hiển thị để caption chính xác
-            sel_year = default_year
-            sel_month = "Tất cả"
-
-        # 3. FIX UX: HIỂN THỊ TRẠNG THÁI (ĂN TIỀN)
-        st.caption(
-            f"📌 Đang hiển thị: **Năm {sel_year}**"
-            + (f" - **Tháng {sel_month}**" if sel_month != "Tất cả" else " (Cả năm)")
-        )
+    with tab_dash:
+        st.title("🎨 4ORANGES - DASHBOARD")
+        df_db = load_repair_data_final()
         
-        # Kiểm tra nếu năm hiện tại là 2026 nhưng DB chưa có ca nào của 2026
-        current_real_year = datetime.now().year
-        if current_real_year not in years:
-            st.info(f"💡 Lưu ý: Hệ thống chưa ghi nhận dữ liệu thực tế của năm {current_real_year}.")
-
-        # --- TIẾP TỤC VẼ BIỂU ĐỒ VỚI df_view ---
-        if not df_view.empty:
-            # Code Metric và Plotly của sếp ở đây...
-            st.write(f"Tìm thấy {len(df_view)} sự vụ.")
+        if df_db.empty:
+            st.warning("⚠️ Database chưa có dữ liệu hoặc không kết nối được.")
         else:
-            st.info("Không có dữ liệu cho tháng này.")
+            # 1. SIDEBAR FILTER PANEL (Dùng Form để tối ưu hiệu năng)
+            with st.sidebar:
+                st.markdown("## ⚙️ LỌC DỮ LIỆU")
+                # Lấy danh sách năm thực tế từ DB, xếp từ mới nhất xuống cũ nhất
+                years = sorted(df_db['NĂM'].unique(), reverse=True)
+                
+                with st.form("filter_form"):
+                    sel_year = st.selectbox("📅 Năm báo cáo", options=years, index=0)
+                    
+                    # Lọc tháng khả dụng theo năm đã chọn
+                    months_in_year = sorted(df_db[df_db['NĂM'] == sel_year]['THÁNG'].unique().tolist())
+                    months_options = ["Tất cả"] + months_in_year
+                    
+                    sel_month = st.selectbox("📆 Tháng", options=months_options, index=0)
+                    
+                    apply_filter = st.form_submit_button("🔍 Áp dụng bộ lọc")
+
+            # 2. LOGIC LỌC DATA (Đảm bảo luôn có data khi vừa mở app)
+            # Nếu sếp chưa bấm nút "Áp dụng", app sẽ lấy năm đầu tiên (mới nhất)
+            if apply_filter:
+                df_view = df_db[df_db['NĂM'] == sel_year].copy()
+                if sel_month != "Tất cả":
+                    df_view = df_view[df_view['THÁNG'] == sel_month]
+            else:
+                sel_year = years[0] # Năm mới nhất
+                sel_month = "Tất cả"
+                df_view = df_db[df_db['NĂM'] == sel_year].copy()
+
+            # 3. HIỂN THỊ TRẠNG THÁI & DASHBOARD
+            st.caption(f"📌 Đang hiển thị: **Năm {sel_year}**" + (f" - **Tháng {sel_month}**" if sel_month != "Tất cả" else " (Cả năm)"))
+            
+            if not df_view.empty:
+                # --- PHẦN KPI & BIỂU ĐỒ ---
+                c1, c2, c3, c4 = st.columns(4)
+                c1.metric("💰 TỔNG CHI PHÍ", f"{df_view['CHI_PHÍ'].sum():,.0f} đ")
+                c2.metric("📋 TỔNG SỰ VỤ", f"{len(df_view)} ca")
+                c3.metric("🚫 KHÔNG THỂ SỬA", f"{int(df_view['is_unrepairable'].sum())}")
+                c4.metric("🏢 CHI NHÁNH", f"{df_view['branch'].nunique()}")
+                
+                st.divider()
+                # Thêm biểu đồ và bảng dữ liệu của sếp ở đây...
+                st.dataframe(df_view.head(50), use_container_width=True)
+            else:
+                st.info("Không có dữ liệu cho lựa chọn này.")
 
     # --- TAB 2: QUẢN TRỊ (UNIFIED PIPELINE) ---
     with tab_admin:
-        st.subheader("📥 NHẬP DỮ LIỆU HỆ THỐNG")
-        
+        # Giữ nguyên code Tab Quản trị sếp đã có hoặc dùng bản Unified Pipeline tôi gửi trước đó
+        st.subheader("📥 HỆ THỐNG NHẬP LIỆU TẬP TRUNG")
+        # ... code nhập liệu ...        
         mode = st.radio("Chọn phương thức nhập", ["📂 Upload CSV", "✍️ Nhập thủ công"], horizontal=True)
         df_input = None
 
