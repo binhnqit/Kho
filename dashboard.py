@@ -24,36 +24,46 @@ BASE_COLUMNS = {
 
 # --- 2. HÀM XỬ LÝ DỮ LIỆU (CORE LOGIC) ---
 
-@st.cache_data(ttl=60)
+@st.cache_data(ttl=10) # Giảm TTL xuống 10 giây để thấy dữ liệu 2026 ngay lập tức
 def load_repair_data_final():
-    """Tải và chuẩn hóa toàn bộ dữ liệu từ Database"""
     try:
-        res = supabase.table("repair_cases").select("*").execute()
-        if not res.data: return pd.DataFrame()
+        # Truy vấn lấy toàn bộ, sắp xếp theo ngày mới nhất
+        res = supabase.table("repair_cases").select("*").order("confirmed_date", desc=True).execute()
+        
+        if not res.data: 
+            return pd.DataFrame()
+            
         df = pd.DataFrame(res.data)
-        
-        # A. Chuẩn hóa Ngày tháng & Tạo cột hỗ trợ bộ lọc
+
+        # 🛠️ XỬ LÝ NGHẼN ĐỊNH DẠNG:
+        # Chuyển đổi compensation: Nếu là 'false' (string) hoặc False (bool) -> 0
+        df['compensation'] = df['compensation'].apply(lambda x: 0 if str(x).lower() == 'false' else x)
+        df['CHI_PHÍ'] = pd.to_numeric(df['compensation'], errors='coerce').fillna(0)
+
+        # Chuyển đổi Ngày tháng: Ép kiểu datetime chuẩn ISO
         df['date_dt'] = pd.to_datetime(df['confirmed_date'], errors='coerce')
-        df = df.dropna(subset=['date_dt'])
         
+        # Nếu dòng nào không có confirmed_date, lấy created_at làm fallback (dự phòng)
+        df['date_dt'] = df['date_dt'].fillna(pd.to_datetime(df['created_at'], errors='coerce'))
+        
+        # Loại bỏ dòng không thể xác định ngày (tránh lỗi bộ lọc)
+        df = df.dropna(subset=['date_dt'])
+
+        # Tạo cột thời gian
         df['NĂM'] = df['date_dt'].dt.year.astype(int)
         df['THÁNG'] = df['date_dt'].dt.month.astype(int)
         
-        # B. Chuẩn hóa Thứ trong tuần
-        day_map = {'Monday': 'Thứ 2', 'Tuesday': 'Thứ 3', 'Wednesday': 'Thứ 4',
-                   'Thursday': 'Thứ 5', 'Friday': 'Thứ 6', 'Saturday': 'Thứ 7', 'Sunday': 'Chủ Nhật'}
-        df['THỨ'] = df['date_dt'].dt.day_name().map(day_map)
-        
-        # C. Ép kiểu số cho tiền bạc
-        df['CHI_PHÍ'] = pd.to_numeric(df['compensation'], errors='coerce').fillna(0)
-        
-        # D. Fix Encoding Tiếng Việt cho chi nhánh
-        encoding_fix = {"Miá» n Trung": "Miền Trung", "Miá» n Báº¯c": "Miền Bắc", "Miá» n Nam": "Miền Nam"}
-        df['branch'] = df['branch'].replace(encoding_fix).fillna("Chưa xác định")
-        
+        # Fix Encoding cho Chi nhánh (Dựa trên dữ liệu thực tế của sếp)
+        branch_map = {
+            "Miá» n Trung": "Miền Trung",
+            "Miá» n Báº¯c": "Miền Bắc",
+            "Miá» n Nam": "Miền Nam"
+        }
+        df['branch'] = df['branch'].replace(branch_map)
+
         return df
     except Exception as e:
-        st.error(f"Lỗi hệ thống khi tải dữ liệu: {e}")
+        st.error(f"🚨 Lỗi truy vấn Database: {e}")
         return pd.DataFrame()
 
 def log_import_audit(source, rows):
