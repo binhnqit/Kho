@@ -23,8 +23,6 @@ BASE_COLUMNS = {
 
 # --- 2. HÀM XỬ LÝ DỮ LIỆU (CORE LOGIC) ---
 
-@st.cache_data(ttl=10)
-@st.cache_data(ttl=10)
 @st.cache_data(ttl=300) # Tăng lên 5 phút để tránh load liên tục gây treo
 def load_repair_data_final():
     try:
