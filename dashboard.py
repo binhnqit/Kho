@@ -109,13 +109,23 @@ def main():
 
     # --- BẢNG DỮ LIỆU CHI TIẾT ---
     st.subheader("📋 NHẬT KÝ VẬN HÀNH CHI TIẾT")
-    # Định dạng lại ngày để hiển thị bảng cho đẹp
+    
+    # Tạo bản copy để không ảnh hưởng dữ liệu gốc
     df_display = df_view.copy()
+    
+    # Định dạng lại ngày để hiển thị cho đẹp
     df_display['NGÀY'] = df_display['date_dt'].dt.strftime('%d/%m/%Y')
     
+    # Danh sách các cột muốn HIỂN THỊ trên màn hình
     cols_to_show = ['NGÀY', 'THỨ', 'branch', 'customer_name', 'issue_reason', 'CHI_PHÍ', 'note']
+    
+    # 👉 BƯỚC FIX CỐT LÕI: 
+    # 1. Sắp xếp trên toàn bộ DataFrame (nơi vẫn còn cột 'date_dt')
+    # 2. Sau đó mới trích xuất các cột trong 'cols_to_show' để hiển thị
+    df_sorted = df_display.sort_values('date_dt', ascending=False)
+    
     st.dataframe(
-        df_display[cols_to_show].sort_values('date_dt', ascending=False), 
+        df_sorted[cols_to_show], 
         use_container_width=True, 
         hide_index=True
     )
