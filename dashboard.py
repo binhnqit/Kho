@@ -26,38 +26,28 @@ BASE_COLUMNS = {
 @st.cache_data(ttl=10)
 def load_repair_data_final():
     try:
-        # Truy vấn lấy toàn bộ, ưu tiên dữ liệu mới nhất lên đầu
-        res = supabase.table("repair_cases").select("*").order("confirmed_date", desc=True).execute()
+        res = supabase.table("repair_cases").select("*").execute()
         if not res.data: return pd.DataFrame()
-        
         df = pd.DataFrame(res.data)
 
-        # XỬ LÝ DỮ LIỆU
+        # 1. Sửa lỗi Font
+        encoding_map = {"Miá» n Trung": "Miền Trung", "Miá» n Báº¯c": "Miền Bắc", "Miá» n Nam": "Miền Nam"}
+        df['branch'] = df['branch'].replace(encoding_map)
+
+        # 2. Xử lý ngày tháng (Chỉ lấy confirmed_date, bỏ qua created_at để tránh data ảo)
+        df['date_dt'] = pd.to_datetime(df['confirmed_date'], errors='coerce')
+        df = df.dropna(subset=['date_dt']) # Dòng nào confirmed_date trống sẽ bị loại bỏ khỏi Dashboard
+        
+        df['NĂM'] = df['date_dt'].dt.year.astype(int)
+        df['THÁNG'] = df['date_dt'].dt.month.astype(int)
+
+        # 3. Xử lý chi phí
         df['compensation'] = df['compensation'].apply(lambda x: 0 if str(x).lower() == 'false' else x)
         df['CHI_PHÍ'] = pd.to_numeric(df['compensation'], errors='coerce').fillna(0)
         
-        # Ép kiểu ngày tháng chuẩn ISO
-        df['date_dt'] = pd.to_datetime(df['confirmed_date'], errors='coerce')
-        # Fallback nếu confirmed_date trống thì lấy created_at
-        if 'created_at' in df.columns:
-            df['date_dt'] = df['date_dt'].fillna(pd.to_datetime(df['created_at'], errors='coerce'))
-        
-        df = df.dropna(subset=['date_dt'])
-
-        # Tạo cột thời gian phục vụ Dashboard
-        df['NĂM'] = df['date_dt'].dt.year.astype(int)
-        df['THÁNG'] = df['date_dt'].dt.month.astype(int)
-        
-        day_map = {'Monday': 'Thứ 2', 'Tuesday': 'Thứ 3', 'Wednesday': 'Thứ 4',
-                   'Thursday': 'Thứ 5', 'Friday': 'Thứ 6', 'Saturday': 'Thứ 7', 'Sunday': 'Chủ Nhật'}
-        df['THỨ'] = df['date_dt'].dt.day_name().map(day_map)
-        
-        branch_map = {"Miá» n Trung": "Miền Trung", "Miá» n Báº¯c": "Miền Bắc", "Miá» n Nam": "Miền Nam"}
-        df['branch'] = df['branch'].replace(branch_map).fillna("Chưa xác định")
-
         return df
     except Exception as e:
-        st.error(f"🚨 Lỗi Database: {e}")
+        st.error(f"Lỗi: {e}")
         return pd.DataFrame()
 
 # --- 3. GIAO DIỆN CHÍNH ---
