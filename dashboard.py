@@ -11,37 +11,44 @@ supabase = create_client(url, key)
 
 # --- 2. HÀM XỬ LÝ (TRÁI TIM CỦA APP) ---
 @st.cache_data(ttl=60) # Tự động làm mới sau 1 phút để cập nhật ca mới nạp
+@st.cache_data(ttl=60)
 def load_repair_data_final():
     try:
         res = supabase.table("repair_cases").select("*").execute()
         if not res.data: 
-            return pd.DataFrame(columns=['date_dt', 'NĂM', 'THÁNG', 'THỨ', 'CHI_PHÍ', 'branch', 'machine_id'])
+            return pd.DataFrame()
         
         df = pd.DataFrame(res.data)
 
-        # 1. Ép kiểu ngày từ confirmed_date
-        df['date_dt'] = pd.to_datetime(df['confirmed_date'], errors='coerce')
-        df = df.dropna(subset=['date_dt'])
-
-        # 2. TẠO CỘT 'THỨ' (Đây là cột đang bị thiếu gây lỗi KeyError)
-        day_map = {
-            'Monday': 'Thứ 2', 'Tuesday': 'Thứ 3', 'Wednesday': 'Thứ 4',
-            'Thursday': 'Thứ 5', 'Friday': 'Thứ 6', 'Saturday': 'Thứ 7', 'Sunday': 'Chủ Nhật'
-        }
-        df['THỨ'] = df['date_dt'].dt.day_name().map(day_map)
-
-        # 3. Trích xuất Năm/Tháng để khớp bộ lọc
-        df['NĂM'] = df['date_dt'].dt.year.astype(int)
-        df['THÁNG'] = df['date_dt'].dt.month.astype(int)
-
-        # 4. Ép kiểu tiền tệ (Biến 'false' thành 0)
-        df['CHI_PHÍ'] = pd.to_numeric(df['compensation'], errors='coerce').fillna(0)
+        # 1. PHÂN TÁCH HAI LOẠI THỜI GIAN
+        # confirmed_dt dùng cho KPI, Xu hướng, Bộ lọc
+        df['confirmed_dt'] = pd.to_datetime(df['confirmed_date'], errors='coerce')
+        # created_dt dùng để sắp xếp thứ tự nhập liệu
+        df['created_dt']   = pd.to_datetime(df['created_at'], errors='coerce')
         
-        # 5. Chuẩn hóa chi nhánh
+        # Loại bỏ rác nếu không có ngày nghiệp vụ
+        df = df.dropna(subset=['confirmed_dt'])
+
+        # 2. TRÍCH XUẤT THÔNG TIN NGHIỆP VỤ (KPI + FILTER)
+        df['NĂM'] = df['confirmed_dt'].dt.year.astype(int)
+        df['THÁNG'] = df['confirmed_dt'].dt.month.astype(int)
+        
+        day_map = {'Monday': 'Thứ 2', 'Tuesday': 'Thứ 3', 'Wednesday': 'Thứ 4',
+                   'Thursday': 'Thứ 5', 'Friday': 'Thứ 6', 'Saturday': 'Thứ 7', 'Sunday': 'Chủ Nhật'}
+        df['THỨ'] = df['confirmed_dt'].dt.day_name().map(day_map)
+
+        # 3. CHUẨN HÓA DỮ LIỆU SỐ & CHI NHÁNH
+        df['CHI_PHÍ'] = pd.to_numeric(df['compensation'], errors='coerce').fillna(0)
         encoding_dict = {"Miá» n Trung": "Miền Trung", "Miá» n Báº¯c": "Miền Bắc", "Miá» n Nam": "Miền Nam"}
         df['branch'] = df['branch'].replace(encoding_dict)
 
+        # 4. SẮP XẾP THEO HỆ THỐNG (Mới nhập hiện lên đầu)
+        df = df.sort_values(by='created_dt', ascending=False)
+
         return df
+    except Exception as e:
+        st.error(f"Lỗi logic: {e}")
+        return pd.DataFrame()
     except Exception as e:
         st.error(f"Lỗi: {e}")
         return pd.DataFrame()
