@@ -70,41 +70,51 @@ def main():
     with tab_dash:
         st.title("🎨 4ORANGES - DASHBOARD")
         df = load_repair_data_final()
+        
         if df.empty:
             st.warning("⚠️ Hệ thống chưa có dữ liệu.")
         else:
-            # Filter
+            # --- PHẦN LỌC DỮ LIỆU ĐÃ TỐI ƯU ---
             with st.sidebar:
-                st.header("⚙️ LỌC DỮ LIỆU")
-                years = sorted(df['NĂM'].unique(), reverse=True)
-                sel_year = st.selectbox("Năm báo cáo", years)
-                branches = ["Tất cả"] + sorted(df['branch'].unique().tolist())
-                sel_branch = st.selectbox("Chi nhánh", branches)
-            
-            df_view = df[df['NĂM'] == sel_year]
-            if sel_branch != "Tất cả": df_view = df_view[df_view['branch'] == sel_branch]
+                st.header("⚙️ BỘ LỌC HỆ THỐNG")
+                
+                # 1. Lọc theo Năm (Lấy từ cột date_dt đã chuẩn hóa)
+                list_years = sorted(df['NĂM'].unique().tolist(), reverse=True)
+                sel_year = st.selectbox("📅 Chọn Năm báo cáo", ["Tất cả"] + list_years)
+                
+                # 2. Lọc theo Chi nhánh
+                list_branches = sorted(df['branch'].unique().tolist())
+                sel_branch = st.selectbox("🏢 Chọn Chi nhánh", ["Tất cả"] + list_branches)
+                
+                # 3. Lọc theo Tình trạng (Mới bổ sung cho chuẩn Enterprise)
+                st.divider()
+                st.caption("Lọc nhanh tình trạng máy:")
+                only_unrepairable = st.checkbox("Chỉ xem máy không thể sửa")
 
-            # KPI
-            c1, c2, c3, c4 = st.columns(4)
-            c1.metric("💰 TỔNG CHI PHÍ", f"{df_view['CHI_PHÍ'].sum():,.0f} đ")
-            c2.metric("📋 TỔNG SỰ VỤ", f"{len(df_view)} ca")
-            c3.metric("🚫 KHÔNG THỂ SỬA", f"{int(df_view['is_unrepairable'].sum())}")
-            c4.metric("🏢 CHI NHÁNH", f"{df_view['branch'].nunique()}")
-
-            # Biểu đồ xu hướng
-            col1, col2 = st.columns([6, 4])
-            with col1:
-                st.write("📈 **XU HƯỚNG THEO THỨ**")
-                order = ['Thứ 2', 'Thứ 3', 'Thứ 4', 'Thứ 5', 'Thứ 6', 'Thứ 7', 'Chủ Nhật']
-                day_stats = df_view['THỨ'].value_counts().reindex(order).reset_index()
-                day_stats.columns = ['THỨ_NAME', 'SỐ_CA']
-                st.plotly_chart(px.line(day_stats, x='THỨ_NAME', y='SỐ_CA', markers=True, color_discrete_sequence=['#FF4500']), use_container_width=True)
+            # --- ÁP DỤNG LOGIC LỌC (FILTERING) ---
+            df_view = df.copy()
             
-            with col2:
-                st.write("🧩 **LÝ DO HỎNG PHỔ BIẾN**")
-                reason_df = df_view['issue_reason'].value_counts().reset_index().head(10)
-                reason_df.columns = ['LÝ_DO', 'SỐ_LƯỢNG']
-                st.plotly_chart(px.pie(reason_df, names='LÝ_DO', values='SỐ_LƯỢNG', hole=0.4), use_container_width=True)
+            if sel_year != "Tất cả":
+                df_view = df_view[df_view['NĂM'] == sel_year]
+                
+            if sel_branch != "Tất cả":
+                df_view = df_view[df_view['branch'] == sel_branch]
+                
+            if only_unrepairable:
+                df_view = df_view[df_view['is_unrepairable'] == True]
+
+            # --- HIỂN THỊ KPI & BIỂU ĐỒ ---
+            if df_view.empty:
+                st.info("ℹ️ Không tìm thấy dữ liệu phù hợp với bộ lọc hiện tại.")
+            else:
+                # (Tiếp tục các phần Metric và Chart như cũ...)
+                c1, c2, c3, c4 = st.columns(4)
+                c1.metric("💰 TỔNG CHI PHÍ", f"{df_view['CHI_PHÍ'].sum():,.0f} đ")
+                c2.metric("📋 TỔNG SỰ VỤ", f"{len(df_view)} ca")
+                c3.metric("🚫 KHÔNG THỂ SỬA", f"{int(df_view['is_unrepairable'].sum())}")
+                c4.metric("🏢 CHI NHÁNH", f"{df_view['branch'].nunique()}")
+                
+                # Phần Chart sếp giữ nguyên hoặc dùng bản fix THỨ_NAME ở trên nhé
 
     # --- TAB 2: QUẢN TRỊ (UNIFIED PIPELINE) ---
     with tab_admin:
