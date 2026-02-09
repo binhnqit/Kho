@@ -158,9 +158,94 @@ def main():
                 st.dataframe(df_view.sort_values('date_dt', ascending=False), use_container_width=True)
 
     with tab_admin:
-        st.header("📥 Quản lý dữ liệu")
-        st.write("Sếp có thể thực hiện Import dữ liệu tại đây.")
-        # ... Giữ nguyên phần tab_admin của sếp ...
+        st.title("📥 HỆ THỐNG QUẢN TRỊ DỮ LIỆU")
+        
+        # Tạo 2 cột để phân tách chức năng
+        col_import, col_manual = st.columns([1, 1])
+
+        with col_import:
+            st.subheader("📂 Import từ File CSV")
+            st.info("💡 Lưu ý: File CSV cần có các cột: `confirmed_date`, `branch`, `machine_id`, `compensation`, `customer_name`...")
+            
+            uploaded_file = st.file_uploader("Chọn file CSV để tải lên", type=["csv"], key="csv_upload")
+            
+            if uploaded_file:
+                df_up = pd.read_csv(uploaded_file)
+                
+                # Hiển thị xem trước dữ liệu
+                st.write("👀 Xem trước 5 dòng dữ liệu:")
+                st.dataframe(df_up.head(), use_container_width=True)
+                
+                # Nút xác nhận upload
+                if st.button("🚀 Xác nhận Upload lên Cloud", use_container_width=True, type="primary"):
+                    try:
+                        # Convert DataFrame sang list dict để đẩy lên Supabase
+                        data_to_upsert = df_up.to_dict(orient='records')
+                        res = supabase.table("repair_cases").upsert(data_to_upsert).execute()
+                        
+                        if res.data:
+                            st.success(f"✅ Đã nạp thành công {len(res.data)} dòng vào hệ thống!")
+                            st.cache_data.clear() # Xóa cache để Dashboard cập nhật ngay
+                        else:
+                            st.error("❌ Không có dữ liệu nào được nạp.")
+                    except Exception as e:
+                        st.error(f"❌ Lỗi nạp dữ liệu: {e}")
+
+        with col_manual:
+            st.subheader("✍️ Nhập liệu thủ công")
+            with st.form("manual_entry_form", clear_on_submit=True):
+                # Chia hàng cho form nhập liệu
+                m_c1, m_c2 = st.columns(2)
+                with m_c1:
+                    f_date = st.date_input("Ngày xác nhận", value=datetime.now())
+                    f_branch = st.selectbox("Chi nhánh", ["Miền Bắc", "Miền Trung", "Miền Nam"])
+                with m_c2:
+                    f_machine = st.text_input("Mã số máy (Machine ID)", placeholder="Ví dụ: ABC-123")
+                    f_cost = st.number_input("Chi phí thực tế (đ)", min_value=0, step=10000)
+
+                f_customer = st.text_input("Tên khách hàng")
+                f_reason = st.text_area("Lý do hư hỏng", height=100)
+                
+                submit_manual = st.form_submit_button("💾 Lưu vào hệ thống", use_container_width=True)
+
+                if submit_manual:
+                    if not f_machine or not f_customer:
+                        st.warning("⚠️ Vui lòng nhập đầy đủ Mã máy và Tên khách hàng!")
+                    else:
+                        try:
+                            # Chuẩn bị dữ liệu để insert
+                            new_record = {
+                                "confirmed_date": f_date.isoformat(),
+                                "branch": f_branch,
+                                "machine_id": f_machine,
+                                "compensation": f_cost,
+                                "customer_name": f_customer,
+                                "issue_reason": f_reason,
+                                "created_at": datetime.now().isoformat()
+                            }
+                            
+                            res = supabase.table("repair_cases").insert(new_record).execute()
+                            
+                            if res.data:
+                                st.success(f"✅ Đã lưu ca sửa chữa máy {f_machine} thành công!")
+                                st.cache_data.clear()
+                            else:
+                                st.error("❌ Lỗi khi lưu dữ liệu.")
+                        except Exception as e:
+                            st.error(f"❌ Lỗi: {e}")
+
+        # --- PHẦN PHỤ: CÔNG CỤ DỌN DẸP ---
+        st.divider()
+        with st.expander("🛠️ Công cụ dọn dẹp (Dành cho Admin)"):
+            st.warning("Hành động này sẽ xóa các bản ghi không có thông tin chi nhánh.")
+            if st.button("🧹 Dọn dẹp dòng trống (Branch is Null)"):
+                try:
+                    # Lệnh xóa dòng có branch trống trên Supabase
+                    res = supabase.table("repair_cases").delete().is_("branch", "null").execute()
+                    st.success("Đã dọn dẹp các dòng dữ liệu lỗi!")
+                    st.cache_data.clear()
+                except Exception as e:
+                    st.error(f"Lỗi dọn dẹp: {e}")
 
 if __name__ == "__main__":
     main()
