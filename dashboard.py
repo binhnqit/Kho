@@ -262,42 +262,43 @@ def main():
                     st.rerun()
         # --- PHẦN 2: NHẬP THỦ CÔNG (ĐÃ FIX LỖI 22P02) ---
         with col_manual:
-            st.subheader("✍️ Nhập liệu mới")
-            with st.form("manual_entry_form", clear_on_submit=True):
+            st.subheader("✍️ Thêm ca sửa chữa mới")
+            # Đổi key thành 'form_quan_tri_2026' để không bao giờ trùng
+            with st.form(key="form_quan_tri_2026", clear_on_submit=True):
                 m_c1, m_c2 = st.columns(2)
                 with m_c1:
                     f_date = st.date_input("Ngày xác nhận", value=datetime.now())
                     f_branch = st.selectbox("Chi nhánh", ["Miền Bắc", "Miền Trung", "Miền Nam"])
                 with m_c2:
-                    f_machine = st.text_input("Mã số máy")
-                    f_cost = st.number_input("Chi phí (đ)", min_value=0, step=1000)
+                    f_machine = st.text_input("Mã số máy (Machine ID)") 
+                    f_cost = st.number_input("Chi phí thực tế (đ)", min_value=0, step=10000)
 
                 f_customer = st.text_input("Tên khách hàng")
                 f_reason = st.text_area("Lý do hư hỏng", height=68)
                 
-                submit_manual = st.form_submit_button("💾 Lưu vào hệ thống", use_container_width=True)
+                # Nút bấm cũng nên có style primary cho chuyên nghiệp
+                submit_manual = st.form_submit_button("💾 Lưu vào hệ thống", use_container_width=True, type="primary")
 
                 if submit_manual:
                     if not f_machine or not f_customer:
-                        st.warning("⚠️ Thiếu thông tin bắt buộc!")
+                        st.warning("⚠️ Sếp điền thiếu thông tin rồi!")
                     else:
                         try:
-                            # CHỐT HẠ: Gửi dữ liệu dưới dạng Number, không gửi String hay Boolean
                             new_record = {
                                 "confirmed_date": f_date.isoformat(),
                                 "branch": f_branch,
-                                "machine_id": f_machine,
-                                "compensation": float(f_cost), # Ép về số thực (Float)
+                                "machine_id": str(f_machine).strip(),
+                                "compensation": float(f_cost),
                                 "customer_name": f_customer,
                                 "issue_reason": f_reason,
                                 "created_at": datetime.now().isoformat()
                             }
                             res = supabase.table("repair_cases").insert(new_record).execute()
                             if res.data:
-                                st.success("✅ Đã lưu thành công!")
+                                st.success(f"✅ Đã lưu thành công ca máy: {f_machine}")
                                 st.cache_data.clear()
                         except Exception as e:
-                            st.error(f"❌ Lỗi: {e}")
+                            st.error(f"❌ Vẫn còn lỗi: {e}")
 
         # --- PHẦN 3: CÔNG CỤ DỌN RÁC SIÊU MẠNH ---
         st.divider()
