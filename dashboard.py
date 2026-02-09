@@ -4,15 +4,22 @@ import plotly.express as px
 import datetime
 from supabase import create_client
 
-# --- 1. KẾT NỐI ---
+# --- 1. CẤU HÌNH & KẾT NỐI ---
+st.set_page_config(page_title="4ORANGES - REPAIR OPS", layout="wide", page_icon="🎨")
+
+# Màu sắc thương hiệu 4Oranges
+ORANGE_COLORS = ["#FF8C00", "#FFA500", "#FF4500", "#E67E22", "#D35400"]
+
+# Kết nối Supabase
 SUPABASE_URL = "https://cigbnbaanpebwrufzxfg.supabase.co"
 SUPABASE_KEY = st.secrets.get("SUPABASE_KEY", "sb_publishable_NQzqwJ4YhKC4sQGLxyLAyw_mwRFhkRf")
 supabase = create_client(SUPABASE_URL, SUPABASE_KEY)
 
-# --- 2. HÀM FETCH (DÙNG ĐÚNG TÊN CỘT COMPENSATION) ---
+# --- 2. HÀM FETCH DỮ LIỆU (CHÍNH XÁC THEO SCHEMA SẾP GỬI) ---
 @st.cache_data(ttl=60)
 def fetch_repair_cases():
     try:
+        # Sử dụng đúng cột compensation đã tồn tại trong DB của sếp
         res = supabase.table("repair_cases") \
             .select("id, machine_id, branch, confirmed_date, issue_reason, customer_name, compensation") \
             .order("confirmed_date", desc=True) \
@@ -20,35 +27,51 @@ def fetch_repair_cases():
             .execute()
         return res.data
     except Exception as e:
-        st.error(f"Lỗi fetch: {e}")
+        st.error(f"❌ Lỗi Fetch Database: {e}")
         return None
 
 def load_data_from_db():
     data = fetch_repair_cases()
-    if not data: return pd.DataFrame()
+    if not data: 
+        return pd.DataFrame()
     
     df = pd.DataFrame(data)
+    
+    # Xử lý ngày tháng chuyên sâu
     if 'confirmed_date' in df.columns:
         df['confirmed_date'] = pd.to_datetime(df['confirmed_date'], errors='coerce')
+        # Bỏ dòng lỗi ngày để Dashboard không crash
         df = df.dropna(subset=['confirmed_date'])
+        
         df['NĂM'] = df['confirmed_date'].dt.year.astype(int)
         df['THÁNG'] = df['confirmed_date'].dt.month.astype(int)
         df['NGÀY_HIỂN_THỊ'] = df['confirmed_date'].dt.strftime('%d/%m/%Y')
     
-    # Map compensation thành CHI_PHÍ_THỰC để hiển thị UI
-    df = df.rename(columns={'branch': 'VÙNG', 'compensation': 'CHI_PHÍ_THỰC'})
-    if 'CHI_PHÍ_THỰC' not in df.columns: df['CHI_PHÍ_THỰC'] = 0
+    # Đổi tên cột từ Database sang Tiếng Việt hiển thị UI
+    # compensation -> CHI_PHÍ_THỰC
+    df = df.rename(columns={
+        'branch': 'VÙNG', 
+        'compensation': 'CHI_PHÍ_THỰC',
+        'customer_name': 'TÊN KHÁCH HÀNG',
+        'issue_reason': 'LÝ DO HỎNG'
+    })
+    
+    # Đảm bảo CHI_PHÍ_THỰC luôn là số để tính toán
+    df['CHI_PHÍ_THỰC'] = pd.to_numeric(df['CHI_PHÍ_THỰC'], errors='coerce').fillna(0)
+    
     return df
 
-# --- 3. HÀM IMPORT (SỬA LỖI COLUMN DOES NOT EXIST) ---
+# --- 3. HÀM IMPORT DỮ LIỆU (CƠ CHẾ PHÒNG THỦ CAO) ---
 def import_to_enterprise_schema(df_chunk):
     success_count = 0
     for _, r in df_chunk.iterrows():
         try:
+            # Làm sạch dữ liệu đầu vào
             m_code = str(r.get("Mã số máy", "")).strip()
-            if not m_code or m_code.lower() == "nan": continue
+            if not m_code or m_code.lower() in ["nan", "none", ""]: 
+                continue
 
-            # 1. Upsert Machines (Giữ nguyên)
+            # BƯỚC 1: Xử lý bảng Machines (Upsert để lấy ID)
             m_res = supabase.table("machines").upsert({
                 "machine_code": m_code,
                 "region": str(r.get("Chi Nhánh", "Chưa xác định"))
@@ -57,69 +80,157 @@ def import_to_enterprise_schema(df_chunk):
             if not m_res.data: continue
             machine_id = m_res.data[0]["id"]
 
-            # 2. Định dạng ngày
+            # BƯỚC 2: Định dạng ngày (Fix lỗi định dạng Excel Việt Nam)
             confirmed_val = str(r.get("Ngày Xác nhận", "")).strip()
             formatted_date = None
-            if confirmed_val and confirmed_val != "None":
+            if confirmed_val and confirmed_val.lower() not in ["nan", "none", ""]:
                 try:
                     formatted_date = pd.to_datetime(confirmed_val, dayfirst=True).strftime('%Y-%m-%d')
                 except: pass
 
-            # 3. Xử lý Chi phí (Đưa vào cột compensation)
-            cost_raw = str(r.get("Chi Phí Thực Tế", "0")).replace(",", "")
+            # BƯỚC 3: Xử lý tiền tệ (Xóa dấu phẩy phân tách nghìn)
+            cost_raw = str(r.get("Chi Phí Thực Tế", "0")).replace(",", "").replace(".", "").strip()
             try:
                 val_compensation = float(cost_raw)
             except:
                 val_compensation = 0
 
-            # 4. Insert (Dùng chuẩn tên cột branch, customer_name, compensation)
+            # BƯỚC 4: Đẩy vào bảng repair_cases (Dùng chuẩn cột compensation)
             supabase.table("repair_cases").insert({
                 "machine_id": machine_id,
                 "branch": str(r.get("Chi Nhánh", "Chưa xác định")),
                 "issue_reason": str(r.get("Lý Do", "")),
                 "customer_name": str(r.get("Tên KH", "")),
                 "confirmed_date": formatted_date,
-                "compensation": val_compensation  # ĐÃ ĐỔI TÊN Ở ĐÂY ✅
+                "compensation": val_compensation
             }).execute()
+            
             success_count += 1
         except Exception as e:
-            st.error(f"Lỗi dòng {m_code}: {e}")
+            st.error(f"⚠️ Lỗi tại máy {m_code}: {e}")
             continue
     return success_count
 
-# --- 4. PHẦN GIAO DIỆN (Giữ nguyên logic của sếp) ---
+# --- 4. GIAO DIỆN CHÍNH (ENTERPRISE UI) ---
 def main():
-    st.sidebar.title("🎨 4ORANGES OPS")
-    if st.sidebar.button('🔄 LÀM MỚI DATABASE'):
-        st.cache_data.clear()
-        st.rerun()
+    # Sidebar
+    with st.sidebar:
+        st.image("https://4oranges.com/assets/img/logo.png", width=200) # Thêm logo cho chuyên nghiệp
+        st.title("🎨 OPS DASHBOARD")
+        st.divider()
         
-    df_db = load_data_from_db()
-    
-    tabs = st.tabs(["📊 XU HƯỚNG", "📥 NHẬP DỮ LIỆU"])
-    
+        if st.button('🔄 LÀM MỚI DỮ LIỆU', type="primary", use_container_width=True):
+            st.cache_data.clear()
+            st.rerun()
+            
+        df_db = load_data_from_db()
+        
+        if not df_db.empty:
+            st.success(f"📡 Đã tải {len(df_db)} dòng dữ liệu")
+            # Bộ lọc Năm/Tháng
+            years = sorted(df_db['NĂM'].unique(), reverse=True)
+            sel_year = st.selectbox("📅 Chọn Năm", years)
+            
+            months = ["Tất cả"] + sorted(df_db[df_db['NĂM'] == sel_year]['THÁNG'].unique().tolist())
+            sel_month = st.selectbox("📆 Chọn Tháng", months)
+        else:
+            st.warning("⚠️ Database hiện đang trống")
+
+    # Tabs chính
+    tabs = st.tabs(["📊 PHÂN TÍCH XU HƯỚNG", "📥 NẠP DỮ LIỆU HỆ THỐNG"])
+
+    # --- TAB 0: DASHBOARD ---
     with tabs[0]:
         if df_db.empty:
-            st.warning("Database trống hoặc lỗi kết nối.")
+            st.info("💡 Chào sếp! Hiện chưa có dữ liệu. Vui lòng qua tab **NẠP DỮ LIỆU** để bắt đầu.")
         else:
-            # Lấy list năm từ dữ liệu thực tế
-            years = sorted(df_db['NĂM'].unique(), reverse=True)
-            sel_year = st.sidebar.selectbox("Chọn năm", years)
-            df_view = df_db[df_db['NĂM'] == sel_year]
+            # Lọc dữ liệu theo Sidebar
+            df_view = df_db[df_db['NĂM'] == sel_year].copy()
+            if sel_month != "Tất cả":
+                df_view = df_view[df_view['THÁNG'] == sel_month]
             
-            st.metric("TỔNG CHI PHÍ (COMPENSATION)", f"{df_view['CHI_PHÍ_THỰC'].sum():,.0f} đ")
-            st.dataframe(df_view[['NGÀY_HIỂN_THỊ', 'VÙNG', 'customer_name', 'issue_reason', 'CHI_PHÍ_THỰC']], use_container_width=True)
+            # KPI Header
+            c1, c2, c3 = st.columns(3)
+            with c1:
+                st.metric("💰 TỔNG CHI PHÍ", f"{df_view['CHI_PHÍ_THỰC'].sum():,.0f} đ")
+            with c2:
+                st.metric("📋 TỔNG SỰ VỤ", f"{len(df_view)} ca")
+            with c3:
+                st.metric("🏢 CHI NHÁNH", f"{df_view['VÙNG'].nunique()}")
 
-    with tabs[1]:
-        up = st.file_uploader("Nạp CSV", type="csv")
-        if up and st.button("🚀 ĐỒNG BỘ"):
-            df_up = pd.read_csv(up, encoding='utf-8-sig').fillna("").ffill()
-            # Làm sạch tên cột nếu có khoảng trắng
-            df_up.columns = [c.strip() for c in df_up.columns]
+            st.divider()
             
-            success = import_to_enterprise_schema(df_up)
-            st.success(f"Nạp thành công {success} dòng!")
-            st.cache_data.clear()
+            # Biểu đồ
+            col_left, col_right = st.columns(2)
+            with col_left:
+                fig_bar = px.bar(
+                    df_view['LÝ DO HỎNG'].value_counts().head(10), 
+                    orientation='h', 
+                    title="TOP 10 LÝ DO HỎNG PHỔ BIẾN",
+                    color_discrete_sequence=['#FF4500']
+                )
+                st.plotly_chart(fig_bar, use_container_width=True)
+                
+            with col_right:
+                fig_pie = px.pie(
+                    df_view, names='VÙNG', values='CHI_PHÍ_THỰC', 
+                    title="CƠ CẤU CHI PHÍ THEO VÙNG",
+                    color_discrete_sequence=ORANGE_COLORS,
+                    hole=0.4
+                )
+                st.plotly_chart(fig_pie, use_container_width=True)
+
+            # Bảng danh sách chi tiết
+            st.subheader("📋 CHI TIẾT SỰ VỤ")
+            cols_to_show = ['NGÀY_HIỂN_THỊ', 'VÙNG', 'TÊN KHÁCH HÀNG', 'LÝ DO HỎNG', 'CHI_PHÍ_THỰC']
+            st.dataframe(
+                df_view[cols_to_show].sort_values('NGÀY_HIỂN_THỊ', ascending=False),
+                use_container_width=True,
+                hide_index=True
+            )
+
+    # --- TAB 1: NHẬP DỮ LIỆU ---
+    with tabs[1]:
+        st.subheader("📥 CẬP NHẬT DỮ LIỆU TỪ FILE CSV")
+        st.info("Lưu ý: File CSV cần xuất từ Google Sheet với các cột: Mã số máy, Chi Nhánh, Ngày Xác nhận, Lý Do, Tên KH, Chi Phí Thực Tế.")
+        
+        up = st.file_uploader("Kéo thả file CSV vào đây", type="csv")
+        
+        if up:
+            # Đọc và xử lý ô gộp (ffill) ngay khi load
+            df_up = pd.read_csv(up, encoding='utf-8-sig').fillna("")
+            df_up.columns = [c.strip() for c in df_up.columns] # Xóa khoảng trắng tên cột
+            
+            # Tự động điền dữ liệu trống cho các cột quan trọng (ffill)
+            for col in ['Ngày Xác nhận', 'Chi Nhánh', 'Mã số máy']:
+                if col in df_up.columns:
+                    df_up[col] = df_up[col].replace("", None).ffill()
+            
+            st.write("🔍 **Xem trước dữ liệu sẽ nạp:**")
+            st.dataframe(df_up.head(5), use_container_width=True)
+            
+            if st.button("🚀 XÁC NHẬN ĐỒNG BỘ LÊN CLOUD", type="primary", use_container_width=True):
+                progress_bar = st.progress(0)
+                status_text = st.empty()
+                
+                # Chia nhỏ để nạp (Tránh timeout Supabase)
+                chunk_size = 50
+                total = len(df_up)
+                success_total = 0
+                
+                for i in range(0, total, chunk_size):
+                    chunk = df_up.iloc[i : i + chunk_size]
+                    count = import_to_enterprise_schema(chunk)
+                    success_total += count
+                    
+                    # Cập nhật tiến độ
+                    percent = min((i + chunk_size) / total, 1.0)
+                    progress_bar.progress(percent)
+                    status_text.text(f"⏳ Đang xử lý: {success_total}/{total} dòng...")
+                
+                st.success(f"✅ Đã nạp thành công {success_total}/{total} dòng dữ liệu!")
+                st.cache_data.clear() # Quan trọng: Xóa cache để dashboard thấy data mới ngay
+                st.balloons()
 
 if __name__ == "__main__":
     main()
