@@ -10,43 +10,46 @@ key = st.secrets["SUPABASE_KEY"]
 supabase = create_client(url, key)
 
 # --- 2. HÀM XỬ LÝ (TRÁI TIM CỦA APP) ---
-@st.cache_data(ttl=60) # Cache 1 phút để cân bằng giữa tốc độ và dữ liệu mới
+@st.cache_data(ttl=60)
 def load_repair_data_final():
     try:
         res = supabase.table("repair_cases").select("*").execute()
         if not res.data: return pd.DataFrame()
         df = pd.DataFrame(res.data)
 
-        # A. Sửa lỗi Font (Thông suốt hiển thị)
-        encoding_dict = {"Miá» n Trung": "Miền Trung", "Miá» n Báº¯c": "Miền Bắc", "Miá» n Nam": "Miền Nam"}
-        df['branch'] = df['branch'].replace(encoding_dict).fillna("Khác")
+        # 1. FIX CHI NHÁNH & BỎ DÒNG TRỐNG (Như sếp yêu cầu)
+        # Loại bỏ các dòng mà cột branch bị trống hoặc null
+        df = df.dropna(subset=['branch'])
+        df = df[df['branch'].str.strip() != ""] 
 
-        # B. Ép kiểu ngày tháng - GIẢI QUYẾT MẤT NĂM 2026
-        # Thử ép kiểu linh hoạt nhất có thể
-        df['date_dt'] = pd.to_datetime(df['confirmed_date'], dayfirst=True, errors='coerce')
+        # Sửa lỗi font để gộp về đúng 3 miền
+        encoding_dict = {
+            "Miá» n Trung": "Miền Trung", "Miá» n Báº¯c": "Miền Bắc", "Miá» n Nam": "Miền Nam",
+            "Miá» n Báº°c": "Miền Bắc" # Dự phòng thêm ký tự lạ khác
+        }
+        df['branch'] = df['branch'].replace(encoding_dict)
+
+        # 2. FIX NGÀY THÁNG: ƯU TIÊN CỘT 5 (created_at) VÌ CỘT 2 ĐANG SAI (2223)
+        # Chúng ta dùng created_at để lấy đúng mốc năm 2026
+        df['date_dt'] = pd.to_datetime(df['created_at'], errors='coerce')
         
-        # Nếu vẫn trống, thử lấy từ created_at làm phương án dự phòng cuối cùng
-        if 'created_at' in df.columns:
-            df['date_dt'] = df['date_dt'].fillna(pd.to_datetime(df['created_at'], errors='coerce'))
-
-        # Lọc bỏ rác (những dòng hoàn toàn không có ngày)
+        # Bỏ qua các dòng không có ngày hợp lệ
         df = df.dropna(subset=['date_dt'])
 
-        # C. Trích xuất thời gian
+        # Trích xuất Năm/Tháng/Thứ từ cột chuẩn
         df['NĂM'] = df['date_dt'].dt.year.astype(int)
         df['THÁNG'] = df['date_dt'].dt.month.astype(int)
         day_map = {'Monday': 'Thứ 2', 'Tuesday': 'Thứ 3', 'Wednesday': 'Thứ 4',
                    'Thursday': 'Thứ 5', 'Friday': 'Thứ 6', 'Saturday': 'Thứ 7', 'Sunday': 'Chủ Nhật'}
         df['THỨ'] = df['date_dt'].dt.day_name().map(day_map)
 
-        # D. Xử lý Chi Phí (Thông suốt tiền tệ)
-        # Chuyển đổi 'false' hoặc NaN thành 0, ép về kiểu số
+        # 3. FIX CHI PHÍ: ÉP KIỂU SỐ (Để không bị ra 0đ)
         df['compensation'] = df['compensation'].apply(lambda x: 0 if str(x).lower() == 'false' else x)
         df['CHI_PHÍ'] = pd.to_numeric(df['compensation'], errors='coerce').fillna(0)
         
         return df
     except Exception as e:
-        st.error(f"Lỗi Load Data: {e}")
+        st.error(f"Lỗi xử lý: {e}")
         return pd.DataFrame()
 
 # --- 3. GIAO DIỆN ---
