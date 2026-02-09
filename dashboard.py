@@ -10,38 +10,44 @@ key = st.secrets["SUPABASE_KEY"]
 supabase = create_client(url, key)
 
 # --- 2. HÀM XỬ LÝ (TRÁI TIM CỦA APP) ---
-@st.cache_data(ttl=60)
+@st.cache_data(ttl=60) # Tự động làm mới sau 1 phút để cập nhật ca mới nạp
 def load_repair_data_final():
     try:
+        # Truy vấn toàn bộ từ bảng repair_cases
         res = supabase.table("repair_cases").select("*").execute()
-        if not res.data: return pd.DataFrame()
+        if not res.data: 
+            return pd.DataFrame()
+        
         df = pd.DataFrame(res.data)
 
-        # 1. TRỌNG TÂM: Lấy ngày từ cột confirmed_date
+        # A. XỬ LÝ TRỤC THỜI GIAN (Dựa trên ngày xác nhận từ Form)
         df['date_dt'] = pd.to_datetime(df['confirmed_date'], errors='coerce')
-        
-        # Loại bỏ các dòng không có ngày xác nhận hợp lệ
-        df = df.dropna(subset=['date_dt'])
+        df = df.dropna(subset=['date_dt']) # Loại bỏ dòng rác không có ngày
 
-        # 2. TRÍCH XUẤT THÔNG TIN THỜI GIAN ĐỂ LỌC
+        # B. PHÂN TÁCH NĂM/THÁNG ĐỂ KHỚP BỘ LỌC
         df['NĂM'] = df['date_dt'].dt.year.astype(int)
         df['THÁNG'] = df['date_dt'].dt.month.astype(int)
         
-        # Chuyển tên thứ sang tiếng Việt để vẽ biểu đồ
         day_map = {'Monday': 'Thứ 2', 'Tuesday': 'Thứ 3', 'Wednesday': 'Thứ 4',
                    'Thursday': 'Thứ 5', 'Friday': 'Thứ 6', 'Saturday': 'Thứ 7', 'Sunday': 'Chủ Nhật'}
         df['THỨ'] = df['date_dt'].dt.day_name().map(day_map)
 
-        # 3. CHUẨN HÓA SỐ TIỀN & CHI NHÁNH
+        # C. CHUẨN HÓA CHI PHÍ (Fix lỗi Boolean 'false' -> 0)
         df['CHI_PHÍ'] = pd.to_numeric(df['compensation'], errors='coerce').fillna(0)
         
-        # Gộp các miền bị lỗi font (ví dụ: Miá» n Nam -> Miền Nam)
-        encoding_dict = {"Miá» n Trung": "Miền Trung", "Miá» n Báº¯c": "Miền Bắc", "Miá» n Nam": "Miền Nam"}
-        df['branch'] = df['branch'].replace(encoding_dict)
+        # D. CHUẨN HÓA CHI NHÁNH (Gộp 7 chi nhánh về đúng 3 miền)
+        encoding_dict = {
+            "Miá» n Trung": "Miền Trung", "Miá» n Báº¯c": "Miền Bắc", "Miá» n Nam": "Miền Nam",
+            "Miền Bắc": "Miền Bắc", "Miền Trung": "Miền Trung", "Miền Nam": "Miền Nam"
+        }
+        df['branch'] = df['branch'].map(encoding_dict).fillna("Khác")
+
+        # E. SẮP XẾP: Luôn để ca mới nhất lên trên cùng
+        df = df.sort_values(by='date_dt', ascending=False)
 
         return df
     except Exception as e:
-        st.error(f"Lỗi tải dữ liệu: {e}")
+        st.error(f"❌ Lỗi trích xuất dữ liệu: {e}")
         return pd.DataFrame()
 
 # --- 3. GIAO DIỆN ---
