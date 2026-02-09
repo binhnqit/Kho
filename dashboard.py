@@ -10,7 +10,6 @@ key = st.secrets["SUPABASE_KEY"]
 supabase = create_client(url, key)
 
 # --- 2. HÀM XỬ LÝ (TRÁI TIM CỦA APP) ---
-@st.cache_data(ttl=60) # Tự động làm mới sau 1 phút để cập nhật ca mới nạp
 @st.cache_data(ttl=60)
 def load_repair_data_final():
     try:
