@@ -208,7 +208,7 @@ def main():
                 k1.metric("💰 Tổng chi phí", f"{df_view['CHI_PHÍ'].sum():,.0f} đ")
                 k2.metric("🛠️ Tổng số ca", f"{len(df_view)} ca")
                 k3.metric("🏢 Chi nhánh HOT", df_view['branch'].value_counts().idxmax())
-                k4.metric("⚠️ Máy rủi ro nhất", df_view['machine_id'].value_counts().idxmax())
+                k4.metric("⚠️ Máy rủi ro nhất", df_view['machine_code'].value_counts().idxmax())
 
                 st.divider()
 
