@@ -232,7 +232,7 @@ def main():
                 today = df_view['confirmed_dt'].max()
 
                 risk_df = (
-                    df_view.groupby('machine_id')
+                    df_view.groupby('machine_code')
                     .agg(
                         so_ca=('id', 'count'),
                         tong_chi_phi=('CHI_PHÍ', 'sum'),
