@@ -1,5 +1,5 @@
 # services/repair_service.py
-import pd
+import pandas as pd
 from core.database import supabase  # <--- PHẢI CÓ DÒNG NÀY
 
 def get_repair_data():
