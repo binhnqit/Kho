@@ -4,7 +4,7 @@ import hashlib
 import plotly.express as px
 from supabase import create_client
 from datetime import datetime
-
+t.set_page_config(page_title="4ORANGES OPS 2026", layout="wide", page_icon="🎨")
 # --- 1. KẾT NỐI HỆ THỐNG ---
 url = "https://cigbnbaanpebwrufzxfg.supabase.co"
 key = st.secrets["SUPABASE_KEY"]
