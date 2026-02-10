@@ -125,32 +125,159 @@ def main():
                 st.table(df_view.nlargest(5, 'CHI_PHÍ')[['confirmed_dt', 'machine_id', 'CHI_PHÍ']])
 
     # --- TAB 2: QUẢN TRỊ (Sub-tabs & Rollback) ---
-    with tab_admin:
-        st.title("📥 Quản Trị Dữ Liệu")
-        s1, s2 = st.tabs(["➕ NHẬP LIỆU", "📜 LỊCH SỬ BATCH"])
+    # --- TAB 2: QUẢN TRỊ HỆ THỐNG (UPGRADED) ---
+with tab_admin:
+    st.title("📥 Quản Trị & Điều Hành Chi Nhánh")
+    
+    # Chia tab con theo cấu trúc Enterprise
+    admin_sub1, admin_sub2, admin_sub3 = st.tabs([
+        "➕ NHẬP LIỆU HỆ THỐNG", 
+        "🏢 TÌNH TRẠNG CHI NHÁNH", 
+        "📜 TRUY VẾT & AUDIT"
+    ])
+
+    # --- 1. NHẬP LIỆU (Manual + CSV) ---
+    with admin_sub1:
+        c_up, c_man = st.columns([4, 6])
         
-        with s1:
-            c_up, c_man = st.columns(2)
-            with c_up:
-                st.subheader("📂 CSV Import")
-                up_file = st.file_uploader("Chọn file", type="csv")
-                if up_file:
-                    df_up = pd.read_csv(up_file)
-                    batch_id = f"B_{datetime.now().strftime('%m%d%H%M')}"
-                    df_up['batch_id'] = batch_id
-                    df_up['created_at'] = datetime.now().isoformat()
-                    if st.button(f"Xác nhận nạp Lô {batch_id}"):
+        with c_up:
+            st.subheader("📂 Import File CSV")
+            up_file = st.file_uploader("Chọn file dữ liệu đồng bộ", type="csv", key="csv_admin")
+            if up_file:
+                df_up = pd.read_csv(up_file)
+                batch_id = f"BATCH_{datetime.now().strftime('%Y%m%d_%H%M')}"
+                
+                # Bổ sung metadata chuẩn Audit
+                df_up['batch_id'] = batch_id
+                df_up['created_at'] = datetime.now().isoformat()
+                
+                st.write(f"🔍 Xem trước lô: **{batch_id}** ({len(df_up)} dòng)")
+                st.dataframe(df_up.head(5), use_container_width=True)
+                
+                if st.button(f"🚀 Xác nhận nạp Lô {batch_id}", use_container_width=True, type="primary"):
+                    try:
+                        # Ép kiểu dữ liệu trước khi đẩy lên Supabase để khớp DB
+                        if 'compensation' in df_up.columns:
+                            df_up['compensation'] = pd.to_numeric(df_up['compensation']).fillna(0)
+                        
                         supabase.table("repair_cases").upsert(df_up.to_dict(orient='records')).execute()
+                        st.success(f"✅ Đã nạp thành công {len(df_up)} bản ghi!")
                         st.cache_data.clear()
                         st.rerun()
-            with c_man:
-                st.subheader("✍️ Nhập tay")
-                with st.form("f_man"):
-                    f_m = st.text_input("Mã máy")
-                    f_c = st.number_input("Chi phí", min_value=0)
-                    if st.form_submit_button("Lưu ca mới"):
-                        # Logic insert tương tự...
-                        st.success("Đã lưu!")
+                    except Exception as e:
+                        st.error(f"Lỗi nạp Batch: {e}")
+
+        with c_man:
+            # FORM NHẬP TAY CHUẨN ENTERPRISE
+            with st.form("f_man_enterprise", clear_on_submit=True):
+                st.subheader("✍️ Nhập ca sửa chữa đơn lẻ")
+                c1, c2 = st.columns(2)
+                with c1:
+                    f_machine = st.text_input("Mã máy *")
+                    f_branch = st.selectbox("Chi nhánh *", ["Miền Bắc", "Miền Trung", "Miền Nam"])
+                    f_cost = st.number_input("Chi phí thực tế (đ)", min_value=0, step=10000)
+                with c2:
+                    f_confirmer = st.text_input("Người xác nhận *")
+                    f_confirmed_date = st.date_input("Ngày xác nhận", value=datetime.now())
+                    f_reason = st.selectbox(
+                        "Nguyên nhân hư hỏng",
+                        ["Hao mòn", "Lỗi vận hành", "Lỗi linh kiện", "Ngoại lực", "Khác"]
+                    )
+                f_note = st.text_area("Ghi chú thêm (nếu có)")
+
+                if st.form_submit_button("💾 Lưu vào cơ sở dữ liệu", use_container_width=True):
+                    if not f_machine or not f_confirmer:
+                        st.warning("⚠️ Vui lòng điền đủ Mã máy và Người xác nhận.")
+                    else:
+                        record = {
+                            "machine_id": f_machine.strip().upper(),
+                            "branch": f_branch,
+                            "compensation": float(f_cost), # Map đúng cột gốc Database
+                            "confirmed_by": f_confirmer,
+                            "confirmed_date": f_confirmed_date.isoformat(), # Map đúng cột gốc Database
+                            "issue_reason": f_reason,
+                            "note": f_note,
+                            "batch_id": f"MANUAL_{datetime.now().strftime('%Y%m%d')}",
+                            "created_at": datetime.now().isoformat()
+                        }
+                        try:
+                            supabase.table("repair_cases").insert(record).execute()
+                            st.success("✅ Đã lưu ca sửa chữa và cập nhật hệ thống!")
+                            st.cache_data.clear()
+                            st.rerun()
+                        except Exception as e:
+                            st.error(f"Lỗi lưu tay: {e}")
+
+    # --- 2. TÌNH TRẠNG THEO MIỀN ---
+    with admin_sub2:
+        st.subheader("🏢 Theo dõi vận hành theo chi nhánh")
+        sel_branch = st.selectbox("Chọn chi nhánh để xem báo cáo nhanh", ["Miền Bắc", "Miền Trung", "Miền Nam"])
+        
+        df_branch = df_db[df_db['branch'] == sel_branch]
+        
+        if not df_branch.empty:
+            bc1, bc2, bc3 = st.columns(3)
+            bc1.metric("🛠️ Tổng số ca", f"{len(df_branch)} ca")
+            bc2.metric("💰 Tổng chi phí", f"{df_branch['CHI_PHÍ'].sum():,.0f} đ")
+            
+            # Xử lý trường hợp có dữ liệu nhưng chưa có máy nào hỏng
+            top_m = df_branch['machine_id'].value_counts()
+            if not top_m.empty:
+                bc3.metric("⚠️ Máy lỗi nhiều nhất", top_m.idxmax())
+
+            st.divider()
+            st.write(f"📋 **Danh sách thiết bị có rủi ro tại {sel_branch}**")
+            
+            # Bảng tổng hợp tình trạng máy (Aggregated View)
+            machine_view = (
+                df_branch
+                .groupby('machine_id')
+                .agg(
+                    so_lan=('machine_id', 'count'),
+                    tong_chi_phi=('CHI_PHÍ', 'sum'),
+                    ca_moi_nhat=('confirmed_dt', 'max')
+                )
+                .reset_index()
+                .sort_values('so_lan', ascending=False)
+            )
+            
+            st.dataframe(
+                machine_view.style.format({'tong_chi_phi': '{:,.0f} đ'}), 
+                use_container_width=True, 
+                hide_index=True
+            )
+        else:
+            st.info(f"Chi nhánh {sel_branch} hiện chưa có dữ liệu ghi nhận.")
+
+    # --- 3. LỊCH SỬ BATCH & AUDIT ---
+    with admin_sub3:
+        st.subheader("📜 Nhật ký nhập liệu (Audit Trail)")
+        if 'batch_id' in df_db.columns:
+            # Lấy danh sách lô trừ các ca nhập lẻ
+            history = df_db.groupby('batch_id').agg(
+                so_dong=('id', 'count'),
+                tong_tien=('CHI_PHÍ', 'sum'),
+                ngay_nap=('created_dt', 'max')
+            ).reset_index().sort_values('ngay_nap', ascending=False)
+            
+            st.dataframe(history, use_container_width=True, hide_index=True)
+            
+            st.divider()
+            # Tính năng Rollback cực kỳ quan trọng như sếp nói
+            st.subheader("🔥 Khu vực xử lý lỗi (Rollback)")
+            target_batch = st.selectbox("Chọn lô dữ liệu muốn xóa/thu hồi:", history['batch_id'].unique())
+            
+            if st.button(f"🗑️ XOÁ VĨNH VIỄN LÔ {target_batch}"):
+                if "MANUAL" in target_batch:
+                    st.error("Lô nhập tay không được xóa hàng loạt. Vui lòng xóa từng dòng trong Database.")
+                else:
+                    try:
+                        supabase.table("repair_cases").delete().eq("batch_id", target_batch).execute()
+                        st.success(f"💥 Đã xóa sạch dữ liệu lô {target_batch}!")
+                        st.cache_data.clear()
+                        st.rerun()
+                    except Exception as e:
+                        st.error(f"Lỗi Rollback: {e}")
 
     # --- TAB 3: AI INSIGHTS (ENTERPRISE HARDENED) ---
     with tab_ai:
