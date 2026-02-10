@@ -276,22 +276,26 @@ def main():
 
     # --- TAB 2: QUẢN TRỊ HỆ THỐNG ---
     # ================= TAB 2: QUẢN TRỊ HỆ THỐNG =================
+# =============================================================================
+# --- TAB 2: QUẢN TRỊ HỆ THỐNG ---
+# =============================================================================
 with tab_admin:
     st.title("📥 Quản Trị & Điều Hành Chi Nhánh")
 
+    # Sub-tabs
     ad_sub1, ad_sub2, ad_sub3 = st.tabs([
         "➕ NHẬP LIỆU",
         "🏢 CHI NHÁNH",
         "📜 AUDIT LOG"
     ])
 
-    # ---------------------------------------------------------
-    # SUB-TAB 1: NHẬP LIỆU
-    # ---------------------------------------------------------
+    # =====================================================
+    # SUB TAB 1: NHẬP LIỆU
+    # =====================================================
     with ad_sub1:
         c_up, c_man = st.columns([5, 5])
 
-        # ---------- A. CSV IMPORT ----------
+        # ---------- CSV IMPORT ----------
         with c_up:
             st.subheader("📂 Import CSV (Enterprise)")
 
@@ -317,21 +321,25 @@ with tab_admin:
                         st.success("✅ Cấu trúc hợp lệ")
                         st.dataframe(df_up.head(), use_container_width=True)
 
-                        if st.button("🚀 Xác nhận Import", type="primary", use_container_width=True):
+                        if st.button(
+                            f"🚀 Xác nhận import {len(df_up)} dòng",
+                            use_container_width=True,
+                            type="primary"
+                        ):
                             res_m = supabase.table("machines").select("id, machine_code").execute()
-                            machine_map = {m["machine_code"]: m["id"] for m in res_m.data}
+                            machine_map = {m['machine_code']: m['id'] for m in res_m.data}
 
                             records = []
                             for _, r in df_up.iterrows():
-                                code = str(r["machine_code"]).strip().upper()
-                                if code in machine_map:
+                                m_code = str(r["machine_code"]).strip().upper()
+                                if m_code in machine_map:
                                     records.append({
-                                        "machine_id": machine_map[code],
-                                        "branch": r["branch"],
-                                        "customer_name": r["customer_name"],
+                                        "machine_id": machine_map[m_code],
+                                        "branch": str(r["branch"]).strip(),
+                                        "customer_name": str(r["customer_name"]).strip(),
                                         "confirmed_date": pd.to_datetime(r["confirmed_date"]).date().isoformat(),
                                         "received_date": datetime.now().date().isoformat(),
-                                        "issue_reason": r["issue_reason"],
+                                        "issue_reason": str(r["issue_reason"]).strip(),
                                         "compensation": float(r["compensation"]),
                                         "is_unrepairable": False,
                                         "note": str(r.get("note", ""))
@@ -339,76 +347,78 @@ with tab_admin:
 
                             if records:
                                 supabase.table("repair_cases").insert(records).execute()
-                                st.success(f"✅ Import thành công {len(records)} dòng")
+                                st.success(f"✅ Đã nạp {len(records)} dòng")
                                 st.cache_data.clear()
                                 st.rerun()
                             else:
-                                st.warning("⚠️ Không có dòng hợp lệ")
+                                st.error("❌ Không có mã máy khớp")
+
                 except Exception as e:
-                    st.error(e)
+                    st.error(f"❌ Lỗi file: {e}")
 
-        # ---------- B. MANUAL ENTRY ----------
+        # ---------- MANUAL ENTRY ----------
         with c_man:
-            st.subheader("✍️ Nhập ca sửa chữa")
+            st.subheader("✍️ Nhập ca sửa chữa đơn lẻ")
 
-            with st.form("manual_form", clear_on_submit=True):
-                c1, c2 = st.columns(2)
+            with st.form("f_manual_enterprise", clear_on_submit=True):
+                m1, m2 = st.columns(2)
 
-                with c1:
-                    m_code = st.text_input("Mã máy *")
-                    branch = st.selectbox("Chi nhánh", ["Miền Bắc", "Miền Trung", "Miền Nam"])
-                    cost = st.number_input("Chi phí", min_value=0)
+                with m1:
+                    f_machine_code = st.text_input("Mã máy *")
+                    f_branch = st.selectbox("Chi nhánh *", ["Miền Bắc", "Miền Trung", "Miền Nam"])
+                    f_cost = st.number_input("Chi phí", min_value=0)
 
-                with c2:
-                    customer = st.text_input("Khách hàng *")
-                    confirmed = st.date_input("Ngày xác nhận")
-                    reason = st.text_input("Nguyên nhân *")
+                with m2:
+                    f_customer = st.text_input("Khách hàng *")
+                    f_confirmed = st.date_input("Ngày xác nhận", datetime.now())
+                    f_reason = st.text_input("Nguyên nhân *")
 
-                note = st.text_area("Ghi chú")
-                submit = st.form_submit_button("💾 Lưu", use_container_width=True)
+                f_note = st.text_area("Ghi chú")
+                submit = st.form_submit_button("💾 Lưu dữ liệu", use_container_width=True)
 
                 if submit:
-                    res = supabase.table("machines").select("id").eq(
-                        "machine_code", m_code.strip().upper()
-                    ).execute()
-
-                    if not res.data:
-                        st.error("❌ Mã máy không tồn tại")
+                    if not f_machine_code or not f_customer or not f_reason:
+                        st.warning("⚠️ Điền đầy đủ thông tin")
                     else:
-                        supabase.table("repair_cases").insert({
-                            "machine_id": res.data[0]["id"],
-                            "branch": branch,
-                            "customer_name": customer,
-                            "confirmed_date": confirmed.isoformat(),
-                            "received_date": datetime.now().date().isoformat(),
-                            "issue_reason": reason,
-                            "compensation": cost,
-                            "note": note,
-                            "is_unrepairable": False
-                        }).execute()
+                        res_m = supabase.table("machines").select("id")\
+                            .eq("machine_code", f_machine_code.strip().upper()).execute()
 
-                        st.success("✅ Đã lưu")
-                        st.cache_data.clear()
-                        st.rerun()
+                        if not res_m.data:
+                            st.error("❌ Mã máy không tồn tại")
+                        else:
+                            supabase.table("repair_cases").insert({
+                                "machine_id": res_m.data[0]['id'],
+                                "branch": f_branch,
+                                "customer_name": f_customer.strip(),
+                                "confirmed_date": f_confirmed.isoformat(),
+                                "received_date": datetime.now().date().isoformat(),
+                                "issue_reason": f_reason.strip(),
+                                "note": f_note.strip(),
+                                "compensation": float(f_cost),
+                                "is_unrepairable": False
+                            }).execute()
 
-    # ---------------------------------------------------------
-    # SUB-TAB 2: CHI NHÁNH
-    # ---------------------------------------------------------
+                            st.success("✅ Đã lưu")
+                            st.cache_data.clear()
+                            st.rerun()
+
+    # =====================================================
+    # SUB TAB 2: CHI NHÁNH
+    # =====================================================
     with ad_sub2:
-        st.subheader("🏢 Theo dõi chi nhánh")
-        sel_branch = st.selectbox("Chọn chi nhánh", df_db["branch"].unique())
+        st.subheader("🏢 Theo dõi vận hành theo chi nhánh")
+        sel_b = st.selectbox("Chọn chi nhánh", ["Miền Bắc", "Miền Trung", "Miền Nam"])
 
-        df_b = df_db[df_db["branch"] == sel_branch]
-        if not df_b.empty:
-            view = df_b.groupby("machine_id").agg(
-                so_ca=("id", "count"),
-                tong_chi_phi=("compensation", "sum")
-            ).reset_index()
-            st.dataframe(view, use_container_width=True)
-        else:
-            st.info("Không có dữ liệu")
-
-    # ---------------------------------------------------------
+        if not df_db.empty:
+            df_b = df_db[df_db["branch"] == sel_b]
+            if not df_b.empty:
+                view = df_b.groupby("machine_id").agg(
+                    so_ca=("id", "count"),
+                    tong_chi_phi=("compensation", "sum")
+                ).reset_index()
+                st.dataframe(view, use_container_width=True)
+            else:
+                st.info("Không có dữ liệu")
     # SUB-TAB 3: AUDIT LOG
     # ---------------------------------------------------------
     with ad_sub3:
