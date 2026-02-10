@@ -37,7 +37,29 @@ def load_repair_data_final():
     except Exception as e:
         st.error(f"Lỗi hệ thống tải data: {e}")
         return pd.DataFrame()
+def write_audit_log(action, table_name, record_id=None, old_data=None, new_data=None):
+    """
+    Ghi nhật ký hệ thống. 
+    user_ctx lấy từ session_state (giả định bạn đã lưu khi login)
+    """
+    try:
+        # Lấy thông tin người dùng từ session_state
+        user_id = st.session_state.get('user_id', '00000000-0000-0000-0000-000000000000')
+        user_role = st.session_state.get('user_role', 'guest')
 
+        audit = {
+            "user_id": user_id,
+            "user_role": user_role,
+            "action": action,
+            "table_name": table_name,
+            "record_id": str(record_id) if record_id else None,
+            "old_data": old_data, # Supabase nhận dict cho cột jsonb
+            "new_data": new_data,
+            "created_at": datetime.now().isoformat()
+        }
+        supabase.table("audit_logs").insert(audit).execute()
+    except Exception as e:
+        st.error(f"Lỗi ghi Audit Log: {e}")
 # --- 3. GIAO DIỆN CHÍNH ---
 def main():
     st.set_page_config(page_title="4ORANGES OPS 2026", layout="wide", page_icon="🎨")
@@ -318,7 +340,7 @@ def main():
                                 supabase.table("audit_logs").insert(audit).execute()
                                 st.success("✅ Lưu & audit thành công")
                                 st.cache_data.clear()
-                                st.rerun()
+                                st.rerun()                                
                             except Exception as e:
                                 st.error(f"❌ Lỗi DB: {e}")
 
