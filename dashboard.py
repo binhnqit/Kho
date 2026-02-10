@@ -367,8 +367,7 @@ def main():
                     except Exception as e:
                         st.error(f"❌ Không đọc được CSV: {e}")
 
-            # ---------- PHẦN B: MANUAL ENTRY ----------
-            # ---------- PHẦN B: MANUAL ENTRY (NHẬP THỦ CÔNG) ----------
+        
         # ---------- PHẦN B: MANUAL ENTRY (NHẬP THỦ CÔNG) ----------
         with c_man:
             st.subheader("✍️ Nhập ca sửa chữa đơn lẻ")
@@ -376,8 +375,8 @@ def main():
             with st.form("f_manual_enterprise", clear_on_submit=True):
                 m1, m2 = st.columns(2)
                 with m1:
-                    # Người dùng nhập mã máy dễ nhớ (ví dụ: M001)
-                    f_m_code = st.text_input("Mã máy (VD: M001, M002) *", key="man_m_code")
+                    # Người dùng nhập mã máy (ví dụ: 1641, M001)
+                    f_m_code = st.text_input("Mã máy (VD: 1641) *", key="man_m_code")
                     f_branch = st.selectbox("Chi nhánh *", ["Miền Bắc", "Miền Trung", "Miền Nam"])
                     f_cost = st.number_input("Chi phí bồi thường", min_value=0.0)
                 with m2:
@@ -393,44 +392,62 @@ def main():
                         st.warning("⚠️ Vui lòng điền đủ thông tin dấu *")
                     else:
                         try:
-                            # 🔍 BƯỚC QUAN TRỌNG: Tìm UUID của máy dựa trên mã máy người dùng nhập
-                            # Giả định bảng 'machines' của bạn có cột 'machine_code' và 'id'
+                            # 1. Kiểm tra mã máy trong bảng 'machines'
+                            # Lưu ý: 'machine_code' là cột chứa mã như 1641, 'id' là UUID
                             res_machine = supabase.table("machines") \
                                 .select("id") \
                                 .eq("machine_code", f_m_code.strip().upper()) \
                                 .execute()
                             
-                            if not res_machine.data:
-                                # Nếu không tìm thấy, báo lỗi này đây
-                                st.error(f"❌ Không tìm thấy máy có mã '{f_m_code}' trong danh mục thiết bị!")
-                                st.info("Mẹo: Hãy kiểm tra lại Tab Quản lý máy xem mã này đã được đăng ký chưa.")
-                            else:
-                                # Nếu tìm thấy, lấy cái ID thực sự (UUID)
+                            if res_machine.data:
+                                # Nếu tìm thấy máy đã tồn tại
                                 real_uuid = res_machine.data[0]['id']
-                                
-                                # Chuẩn bị dữ liệu để đẩy lên
-                                record = {
-                                    "machine_id": real_uuid,  # Phải là UUID mới lưu được vào bảng repair_cases
-                                    "branch": f_branch,
-                                    "customer_name": f_customer.strip(),
-                                    "confirmed_date": f_confirmed.isoformat(),
-                                    "received_date": datetime.now().date().isoformat(),
-                                    "issue_reason": f_reason.strip(),
-                                    "note": f_note.strip(),
-                                    "compensation": float(f_cost),
-                                    "is_unrepairable": False
+                            else:
+                                # 💡 TỰ ĐỘNG TẠO MÁY MỚI nếụ chưa có trong hệ thống
+                                # Điều này giúp bạn không bị lỗi "không tồn tại"
+                                new_machine = supabase.table("machines") \
+                                    .insert({"machine_code": f_m_code.strip().upper()}) \
+                                    .execute()
+                                real_uuid = new_machine.data[0]['id']
+                                st.info(f"💡 Đã tự động thêm máy '{f_m_code}' vào danh mục thiết bị.")
+
+                            # 2. Chuẩn bị bản ghi cho bảng 'repair_cases'
+                            record = {
+                                "machine_id": real_uuid,  # Dùng UUID vừa lấy được
+                                "branch": f_branch,
+                                "customer_name": f_customer.strip(),
+                                "confirmed_date": f_confirmed.isoformat(),
+                                "received_date": datetime.now().date().isoformat(),
+                                "issue_reason": f_reason.strip(),
+                                "note": f_note.strip(),
+                                "compensation": float(f_cost),
+                                "is_unrepairable": False
+                            }
+                            
+                            # 3. Thực hiện lưu ca sửa chữa
+                            supabase.table("repair_cases").insert(record).execute()
+                            
+                            # 4. Ghi log vào bảng 'audit_logs' (nếu có)
+                            try:
+                                audit_data = {
+                                    "action": "INSERT_REPAIR",
+                                    "table_name": "repair_cases",
+                                    "actor": "admin",
+                                    "payload": str(record)
                                 }
-                                
-                                # Thực hiện Insert
-                                supabase.table("repair_cases").insert(record).execute()
-                                st.success(f"✅ Đã lưu thành công cho máy {f_m_code}!")
-                                
-                                # Làm mới lại dữ liệu toàn cục
-                                st.cache_data.clear()
-                                st.rerun()
+                                supabase.table("audit_logs").insert(audit_data).execute()
+                            except:
+                                pass # Bỏ qua nếu bảng audit chưa sẵn sàng
+
+                            st.success(f"✅ Đã lưu thành công ca sửa chữa cho máy {f_m_code}!")
+                            
+                            # Làm mới cache và giao diện
+                            st.cache_data.clear()
+                            st.rerun()
 
                         except Exception as e:
                             st.error(f"❌ Lỗi hệ thống: {e}")
+                            st.info("Kiểm tra xem tên cột trong bảng machines có đúng là 'machine_code' không?")
 
         # ---------------------------------------------------------
         # SUB-TAB 3: AUDIT LOG
