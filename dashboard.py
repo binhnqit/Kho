@@ -79,8 +79,7 @@ def main():
             day_stats.columns = ['NGÀY_TRONG_TUẦN', 'SỐ_CA']
             st.plotly_chart(px.area(day_stats, x='NGÀY_TRONG_TUẦN', y='SỐ_CA', markers=True, title="Xu hướng sự vụ theo thứ"), use_container_width=True)
 
-    # --- TAB 2: QUẢN TRỊ (BẢN NÂNG CẤP AUDIT) ---
-    # --- TAB 2: QUẢN TRỊ HỆ THỐNG ---
+       # --- TAB 2: QUẢN TRỊ HỆ THỐNG ---
     with tab_admin:
         st.title("📥 Quản Trị & Điều Hành Chi Nhánh")
         ad_sub1, ad_sub2, ad_sub3 = st.tabs(["➕ NHẬP LIỆU", "🏢 CHI NHÁNH", "📜 AUDIT"])
@@ -93,74 +92,74 @@ def main():
                 up_file = st.file_uploader("Chọn file CSV", type="csv", key="csv_admin")
                 if up_file:
                     df_up = pd.read_csv(up_file)
-                    batch_id = f"BATCH_{datetime.now().strftime('%m%d_%H%M')}"
-                    df_up['batch_id'] = batch_id
-                    df_up['created_at'] = datetime.now().isoformat()
-                    if st.button(f"🚀 Nạp Lô {batch_id}", use_container_width=True):
-                        if 'compensation' in df_up.columns:
-                            df_up['compensation'] = pd.to_numeric(df_up['compensation']).fillna(0)
-                        supabase.table("repair_cases").upsert(df_up.to_dict(orient='records')).execute()
-                        st.cache_data.clear()
-                        st.rerun()
+                    # Tạm thời bỏ qua batch_id vì DB của sếp chưa có cột này
+                    if st.button(f"🚀 Xác nhận nạp {len(df_up)} dòng", use_container_width=True):
+                        try:
+                            supabase.table("repair_cases").upsert(df_up.to_dict(orient='records')).execute()
+                            st.success("✅ Đã nạp dữ liệu thành công!")
+                            st.cache_data.clear()
+                            st.rerun()
+                        except Exception as e:
+                            st.error(f"Lỗi nạp File: {e}")
 
             with c_man:
-                # FIX LỖI THỤT LỀ Ở ĐÂY
                 with st.form("f_man_enterprise", clear_on_submit=True):
                     st.subheader("✍️ Nhập ca sửa chữa đơn lẻ")
                     m1, m2 = st.columns(2)
                     
                     with m1:
+                        # Map đúng tên cột machine_ (có dấu gạch dưới)
                         f_machine = st.text_input("Mã máy *")
                         f_branch = st.selectbox("Chi nhánh *", ["Miền Bắc", "Miền Trung", "Miền Nam"])
                         f_cost = st.number_input("Chi phí thực tế (đ)", min_value=0, step=10000)
                     
                     with m2:
-                        f_confirmer = st.text_input("Người xác nhận *")
+                        # Map đúng tên cột customer_
+                        f_customer = st.text_input("Tên khách hàng *")
                         f_confirmed_date = st.date_input("Ngày xác nhận", value=datetime.now())
-                        # SỬA LẠI: Cho phép nhân viên tự đánh nguyên nhân
-                        f_reason = st.text_input("Nguyên nhân hư hỏng *", placeholder="VD: Hỏng motor, gãy khớp...")
+                        f_reason = st.text_input("Nguyên nhân hư hỏng *")
                     
-                    f_note = st.text_area("Ghi chú chi tiết (nếu có)")
+                    f_note = st.text_area("Ghi chú chi tiết")
                     
-                    # Nút submit nằm trong khối Form
-                    submit_btn = st.form_submit_button("💾 Lưu vào cơ sở dữ liệu", use_container_width=True, type="primary")
-                    
-                    if submit_btn:
-                        if not f_machine or not f_confirmer or not f_reason:
+                    if st.form_submit_button("💾 Lưu vào cơ sở dữ liệu", use_container_width=True, type="primary"):
+                        if not f_machine or not f_customer or not f_reason:
                             st.warning("⚠️ Vui lòng điền đủ các trường có dấu (*)")
                         else:
+                            # GÓI DỮ LIỆU KHỚP 100% VỚI HÌNH ẢNH SẾP GỬI
                             record = {
-                                "machine_id": f_machine.strip().upper(),
+                                "machine_": f_machine.strip().upper(),
                                 "branch": f_branch,
-                                "compensation": float(f_cost),
-                                "confirmed_by": f_confirmer.strip(),
-                                "confirmed_date": f_confirmed_date.isoformat(),
+                                "customer_": f_customer.strip(),
+                                "confirmed_": f_confirmed_date.isoformat(),
                                 "issue_reason": f_reason.strip(),
                                 "note": f_note.strip() if f_note else "",
-                                "batch_id": f"MANUAL_{datetime.now().strftime('%Y%m%d')}",
-                                "created_at": datetime.now().isoformat()
+                                "compensation": float(f_cost),
+                                "is_unrepa": False # Cột mới thấy trong hình của sếp
                             }
                             try:
                                 supabase.table("repair_cases").insert(record).execute()
-                                st.success("✅ Đã lưu ca sửa chữa!")
+                                st.success("✅ Đã lưu thành công!")
                                 st.cache_data.clear()
                                 st.rerun()
                             except Exception as e:
-                                st.error(f"Lỗi Database: {e}")
+                                st.error(f"Lỗi Database thực tế: {e}")
 
         with ad_sub2:
             st.subheader("🏢 Theo dõi vận hành theo chi nhánh")
             sel_b = st.selectbox("Chọn chi nhánh xem nhanh", ["Miền Bắc", "Miền Trung", "Miền Nam"])
-            df_b = df_db[df_db['branch'] == sel_b] if not df_db.empty else pd.DataFrame()
-            if not df_b.empty:
-                m_view = df_b.groupby('machine_id').agg(ca=('id','count'), tien=('CHI_PHÍ','sum')).reset_index()
-                st.dataframe(m_view.sort_values('ca', ascending=False), use_container_width=True, hide_index=True)
+            # Lưu ý: Lúc này df_db cần dùng tên cột machine_ (có dấu gạch dưới)
+            if not df_db.empty:
+                df_b = df_db[df_db['branch'] == sel_b]
+                if not df_b.empty:
+                    m_view = df_b.groupby('machine_').agg(ca=('id','count'), tien=('CHI_PHÍ','sum')).reset_index()
+                    st.dataframe(m_view.sort_values('ca', ascending=False), use_container_width=True, hide_index=True)
 
         with ad_sub3:
             st.subheader("📜 Nhật ký nhập liệu")
-            if not df_db.empty and 'batch_id' in df_db.columns:
-                history = df_db.groupby('batch_id').agg(dong=('id','count'), ngay=('created_dt','max')).reset_index()
-                st.dataframe(history.sort_values('ngay', ascending=False), use_container_width=True, hide_index=True)
+            st.info("Tính năng truy vết theo Lô (Batch) đang tạm dừng do Database thiếu cột 'batch_id'.")
+            if not df_db.empty:
+                st.write("Dữ liệu gần đây:")
+                st.dataframe(df_db.head(10), use_container_width=True)
     with tab_ai:
         st.title("🧠 Trợ Lý AI Phân Tích")
         
