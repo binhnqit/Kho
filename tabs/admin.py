@@ -1,5 +1,6 @@
 import streamlit as st
 from datetime import datetime
+from core.database import supabase
 from services.repair_service import insert_new_repair
 from core.database import supabase
 
