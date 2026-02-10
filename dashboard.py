@@ -13,24 +13,43 @@ supabase = create_client(url, key)
 @st.cache_data(ttl=30)
 def load_repair_data_final():
     try:
-        res = supabase.table("repair_cases").select("*").order("created_at", desc=True).execute()
-        if not res.data: 
+        # 1. Tải dữ liệu sửa chữa
+        res_repair = supabase.table("repair_cases").select("*").order("created_at", desc=True).execute()
+        # 2. Tải danh mục máy để lấy machine_code
+        res_machines = supabase.table("machines").select("id, machine_code").execute()
+        
+        if not res_repair.data: 
             return pd.DataFrame()
         
-        df = pd.DataFrame(res.data)
-        
-        # 1. XỬ LÝ NGÀY THÁNG (An toàn như code Finance)
-        # Chuyển đổi tất cả các cột ngày liên quan
+        df_repair = pd.DataFrame(res_repair.data)
+        df_m = pd.DataFrame(res_machines.data)
+
+        # 3. MERGE để lấy machine_code dựa trên machine_id
+        if not df_m.empty and 'machine_id' in df_repair.columns:
+            # Chuyển ID về cùng kiểu chuỗi để tránh lệch format uuid/string
+            df_repair['machine_id'] = df_repair['machine_id'].astype(str)
+            df_m['id'] = df_m['id'].astype(str)
+            
+            df = pd.merge(
+                df_repair, 
+                df_m[['id', 'machine_code']], 
+                left_on='machine_id', 
+                right_on='id', 
+                how='left'
+            )
+            # Thay thế cột machine_id cũ bằng machine_code để hiển thị cho đẹp
+            df['machine_display'] = df['machine_code'].fillna(df['machine_id'])
+        else:
+            df = df_repair
+            df['machine_display'] = df['machine_id']
+
+        # 4. XỬ LÝ NGÀY THÁNG (An toàn, không lo mất dòng)
         df['created_dt'] = pd.to_datetime(df['created_at'], errors='coerce')
         df['confirmed_dt_raw'] = pd.to_datetime(df['confirmed_date'], errors='coerce')
-
-        # Hướng xử lý: Nếu chưa có ngày xác nhận, lấy ngày tạo để không bị mất dòng trong báo cáo
         df['confirmed_dt'] = df['confirmed_dt_raw'].fillna(df['created_dt'])
         
-        # Loại bỏ những dòng thực sự không có bất kỳ thông tin thời gian nào (rất hiếm)
         df = df.dropna(subset=['confirmed_dt'])
 
-        # 2. TRÍCH XUẤT THÔNG TIN THỜI GIAN
         df['NĂM'] = df['confirmed_dt'].dt.year.astype(int)
         df['THÁNG'] = df['confirmed_dt'].dt.month.astype(int)
         
@@ -40,25 +59,21 @@ def load_repair_data_final():
         }
         df['THỨ'] = df['confirmed_dt'].dt.day_name().map(day_map)
 
-        # 3. XỬ LÝ CHI PHÍ (Cực kỳ quan trọng vì schema của bạn có cả boolean và numeric)
+        # 5. XỬ LÝ CHI PHÍ (Clean dữ liệu nhiễu boolean/string)
         def clean_compensation(val):
-            if isinstance(val, bool): # Nếu Supabase trả về True/False
-                return 0.0
+            if isinstance(val, bool): return 0.0
             try:
-                # Ép kiểu về số, xóa dấu phẩy nếu có (giống code Finance)
                 return float(str(val).replace(',', ''))
             except:
                 return 0.0
 
         df['CHI_PHÍ'] = df['compensation'].apply(clean_compensation)
         
-        # 4. CHUẨN HÓA TEXT (Tránh lỗi lọc do chữ hoa/thường hoặc khoảng trắng)
-        if 'branch' in df.columns:
-            df['branch'] = df['branch'].fillna('Chưa phân loại').str.strip()
-        if 'machine_id' in df.columns:
-            df['machine_id'] = df['machine_id'].fillna('N/A').str.strip()
+        # 6. CHUẨN HÓA TEXT
+        df['branch'] = df['branch'].fillna('Chưa phân loại').str.strip()
+        # Ưu tiên dùng machine_code, nếu không có thì dùng ID
+        df['machine_id'] = df['machine_display'] 
 
-        # Trả về kết quả đã sắp xếp, giữ nguyên tên các cột để không lỗi code hiển thị
         return df.sort_values(by='confirmed_dt', ascending=False)
 
     except Exception as e:
