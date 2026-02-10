@@ -98,25 +98,48 @@ def main():
                         st.cache_data.clear()
                         st.rerun()
             with c_man:
-                with st.form("f_man_enterprise", clear_on_submit=True):
-                    st.subheader("✍️ Nhập ca sửa chữa")
-                    m1, m2 = st.columns(2)
-                    with m1:
-                        f_machine = st.text_input("Mã máy *")
-                        f_branch = st.selectbox("Chi nhánh *", ["Miền Bắc", "Miền Trung", "Miền Nam"])
-                        f_cost = st.number_input("Chi phí (đ)", min_value=0)
-                    with m2:
-                        f_user = st.text_input("Người xác nhận *")
-                        f_date = st.date_input("Ngày xác nhận")
-                        f_reason = st.selectbox("Nguyên nhân", ["Hao mòn", "Lỗi vận hành", "Lỗi linh kiện", "Khác"])
-                    if st.form_submit_button("💾 Lưu ca mới", use_container_width=True):
-                        if f_machine and f_user:
-                            record = {"machine_id": f_machine.strip().upper(), "branch": f_branch, "compensation": float(f_cost),
-                                      "confirmed_by": f_user, "confirmed_date": f_date.isoformat(), "issue_reason": f_reason,
-                                      "batch_id": f"MANUAL_{datetime.now().strftime('%Y%m%d')}", "created_at": datetime.now().isoformat()}
+            # FORM NHẬP TAY CHUẨN ENTERPRISE
+            with st.form("f_man_enterprise", clear_on_submit=True):
+                st.subheader("✍️ Nhập ca sửa chữa đơn lẻ")
+                c1, c2 = st.columns(2)
+                with c1:
+                    f_machine = st.text_input("Mã máy *")
+                    f_branch = st.selectbox("Chi nhánh *", ["Miền Bắc", "Miền Trung", "Miền Nam"])
+                    f_cost = st.number_input("Chi phí thực tế (đ)", min_value=0, step=10000)
+                with c2:
+                    f_confirmer = st.text_input("Người xác nhận *")
+                    f_confirmed_date = st.date_input("Ngày xác nhận", value=datetime.now())
+                    # Sửa theo ý sếp: Nhân viên tự đánh nguyên nhân thay vì chọn mẫu
+                    f_reason = st.text_input("Nguyên nhân hư hỏng *", placeholder="VD: Bể bạc đạn, chập mạch...")
+                
+                f_note = st.text_area("Ghi chú chi tiết (nếu có)")
+
+                if st.form_submit_button("💾 Lưu vào cơ sở dữ liệu", use_container_width=True, type="primary"):
+                    if not f_machine or not f_confirmer or not f_reason:
+                        st.warning("⚠️ Vui lòng điền đủ: Mã máy, Người xác nhận và Nguyên nhân.")
+                    else:
+                        # Gói dữ liệu khớp hoàn toàn với cấu trúc bảng Supabase
+                        record = {
+                            "machine_id": f_machine.strip().upper(),
+                            "branch": f_branch,
+                            "compensation": float(f_cost),
+                            "confirmed_by": f_confirmer.strip(),
+                            "confirmed_date": f_confirmed_date.isoformat(),
+                            "issue_reason": f_reason.strip(), # Nhân viên tự đánh
+                            "note": f_note.strip() if f_note else "",
+                            "batch_id": f"MANUAL_{datetime.now().strftime('%Y%m%d')}",
+                            "created_at": datetime.now().isoformat()
+                        }
+                        
+                        try:
+                            # Thực thi lệnh insert
                             supabase.table("repair_cases").insert(record).execute()
+                            st.success("✅ Đã lưu ca sửa chữa thành công!")
                             st.cache_data.clear()
                             st.rerun()
+                        except Exception as e:
+                            # Hiện lỗi chi tiết để debug nếu API vẫn từ chối
+                            st.error(f"Lỗi Database: {e}")
 
         with ad_sub2:
             sel_branch = st.selectbox("Chọn chi nhánh xem nhanh", ["Miền Bắc", "Miền Trung", "Miền Nam"])
