@@ -9,7 +9,7 @@ url = "https://cigbnbaanpebwrufzxfg.supabase.co"
 key = st.secrets["SUPABASE_KEY"]
 supabase = create_client(url, key)
 
-# --- 2. HÀM XỬ LÝ DỮ LIỆU (GIỮ NGUYÊN DI SẢN) ---
+# --- 2. HÀM XỬ LÝ DỮ LIỆU (KHỚP SCHEMA THỰC TẾ) ---
 @st.cache_data(ttl=30)
 def load_repair_data_final():
     try:
@@ -18,16 +18,9 @@ def load_repair_data_final():
         
         df = pd.DataFrame(res.data)
         
-        # --- SỬA LỖI TÊN CỘT DỰA TRÊN THỰC TẾ DB ---
-        # Kiểm tra thứ tự ưu tiên các cột ngày để tránh KeyError 'confirmed'
-        if 'confirmed' in df.columns:
-            target_date_col = 'confirmed'
-        elif 'confirmed_' in df.columns:
-            target_date_col = 'confirmed_'
-        else:
-            target_date_col = 'created_at' # Phương án dự phòng cuối cùng
-
-        df['confirmed_dt'] = pd.to_datetime(df[target_date_col], errors='coerce')
+        # --- ĐỒNG BỘ CỘT NGÀY THEO SCHEMA ---
+        # Sử dụng 'confirmed_date' là gốc để tính toán báo cáo
+        df['confirmed_dt'] = pd.to_datetime(df['confirmed_date'], errors='coerce')
         df['created_dt'] = pd.to_datetime(df['created_at'], errors='coerce')
         
         # Loại bỏ dòng không có ngày để tránh lỗi biểu đồ
@@ -40,9 +33,9 @@ def load_repair_data_final():
                    'Thursday': 'Thứ 5', 'Friday': 'Thứ 6', 'Saturday': 'Thứ 7', 'Sunday': 'Chủ Nhật'}
         df['THỨ'] = df['confirmed_dt'].dt.day_name().map(day_map)
 
-        # Map đúng cột chi phí (compensa hoặc compensation) thành CHI_PHÍ
-        target_cost_col = 'compensa' if 'compensa' in df.columns else 'compensation'
-        df['CHI_PHÍ'] = pd.to_numeric(df[target_cost_col], errors='coerce').fillna(0)
+        # --- ĐỒNG BỘ CỘT CHI PHÍ THEO SCHEMA ---
+        # Sử dụng 'compensation' thay vì 'compensa'
+        df['CHI_PHÍ'] = pd.to_numeric(df['compensation'], errors='coerce').fillna(0)
         
         return df.sort_values(by='created_dt', ascending=False)
     except Exception as e:
@@ -56,7 +49,7 @@ def main():
 
     tab_dash, tab_admin, tab_ai = st.tabs(["📊 BÁO CÁO VẬN HÀNH", "📥 QUẢN TRỊ HỆ THỐNG", "🧠 AI INSIGHTS"])
 
-    # --- TAB 1: BÁO CÁO VẬN HÀNH (GIỮ NGUYÊN) ---
+    # --- TAB 1: BÁO CÁO VẬN HÀNH ---
     with tab_dash:
         if df_db.empty:
             st.info("Chưa có dữ liệu. Vui lòng nạp ở Tab Quản trị.")
@@ -83,6 +76,7 @@ def main():
             c1, c2, c3 = st.columns(3)
             c1.metric("💰 TỔNG CHI PHÍ", f"{df_view['CHI_PHÍ'].sum():,.0f} đ")
             c2.metric("🛠️ SỐ CA", f"{len(df_view)} ca")
+            # Sử dụng 'branch' từ schema
             c3.metric("🏢 ĐIỂM NÓNG", df_view['branch'].value_counts().idxmax() if not df_view.empty else "N/A")
 
             st.divider()
@@ -116,30 +110,30 @@ def main():
                     st.subheader("✍️ Nhập ca sửa chữa đơn lẻ")
                     m1, m2 = st.columns(2)
                     with m1:
-                        f_machine = st.text_input("Mã máy *")
+                        f_machine = st.text_input("Mã máy (machine_id) *")
                         f_branch = st.selectbox("Chi nhánh *", ["Miền Bắc", "Miền Trung", "Miền Nam"])
-                        f_cost = st.number_input("Chi phí thực tế (đ)", min_value=0, step=10000)
+                        f_cost = st.number_input("Chi phí (compensation)", min_value=0, step=10000)
                     with m2:
-                        f_customer = st.text_input("Tên khách hàng *")
+                        f_customer = st.text_input("Tên khách hàng (customer_name) *")
                         f_confirmed_date = st.date_input("Ngày xác nhận", value=datetime.now())
-                        f_reason = st.text_input("Nguyên nhân hư hỏng *")
+                        f_reason = st.text_input("Nguyên nhân (issue_reason) *")
                     
                     f_note = st.text_area("Ghi chú chi tiết")
                     if st.form_submit_button("💾 Lưu vào cơ sở dữ liệu", use_container_width=True, type="primary"):
                         if not f_machine or not f_customer or not f_reason:
                             st.warning("⚠️ Vui lòng điền đủ các trường (*)")
                         else:
-                            # Tên cột trong record phải khớp 100% với Schema của bạn
+                            # MAP CHÍNH XÁC TÊN CỘT THEO SCHEMA
                             record = {
-                                "machine_": f_machine.strip().upper(),
+                                "machine_id": f_machine.strip().upper(),
                                 "branch": f_branch,
-                                "customer_": f_customer.strip(),
-                                "confirmed": f_confirmed_date.isoformat(), # Sử dụng 'confirmed'
+                                "customer_name": f_customer.strip(),
+                                "received_date": datetime.now().isoformat(),
+                                "confirmed_date": f_confirmed_date.isoformat(),
                                 "issue_reason": f_reason.strip(),
                                 "note": f_note.strip() if f_note else "",
-                                "compensa": float(f_cost), # Sử dụng 'compensa'
-                                "is_unrepa": False,
-                                "received_": datetime.now().isoformat()
+                                "compensation": float(f_cost),
+                                "is_unrepairable": False
                             }
                             try:
                                 supabase.table("repair_cases").insert(record).execute()
@@ -153,7 +147,8 @@ def main():
             st.subheader("🏢 Theo dõi vận hành theo chi nhánh")
             sel_b = st.selectbox("Chọn chi nhánh xem nhanh", ["Miền Bắc", "Miền Trung", "Miền Nam"])
             if not df_db.empty:
-                m_col = 'machine_' if 'machine_' in df_db.columns else 'machine_id'
+                # Đồng bộ tên cột 'machine_id'
+                m_col = 'machine_id' 
                 df_b = df_db[df_db['branch'] == sel_b]
                 if not df_b.empty:
                     m_view = df_b.groupby(m_col).agg(ca=('id','count'), tien=('CHI_PHÍ','sum')).reset_index()
@@ -170,7 +165,8 @@ def main():
         if df_db.empty or len(df_db) < 5:
             st.warning("⚠️ Cần thêm dữ liệu để AI phân tích.")
         else:
-            m_col_ai = 'machine_' if 'machine_' in df_db.columns else 'machine_id'
+            # Đồng bộ tên cột 'machine_id'
+            m_col_ai = 'machine_id'
             ai_1, ai_2, ai_3 = st.tabs(["🚩 CẢNH BÁO", "🏗️ RỦI RO THIẾT BỊ", "📊 DỰ BÁO"])
 
             with ai_1:
@@ -178,8 +174,7 @@ def main():
                 anomalies = df_db[df_db['CHI_PHÍ'] > threshold]
                 if not anomalies.empty:
                     st.error(f"Phát hiện {len(anomalies)} ca vượt ngưỡng chi phí!")
-                    # Bảo vệ hiển thị bằng cách lọc cột tồn tại
-                    valid_cols = [c for c in ['confirmed_dt', m_col_ai, 'CHI_PHÍ'] if c in anomalies.columns]
+                    valid_cols = [c for c in ['confirmed_date', m_col_ai, 'CHI_PHÍ'] if c in anomalies.columns]
                     st.dataframe(anomalies[valid_cols])
                 else:
                     st.success("Không có bất thường chi phí.")
