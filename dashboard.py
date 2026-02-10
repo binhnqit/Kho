@@ -80,83 +80,87 @@ def main():
             st.plotly_chart(px.area(day_stats, x='NGÀY_TRONG_TUẦN', y='SỐ_CA', markers=True, title="Xu hướng sự vụ theo thứ"), use_container_width=True)
 
     # --- TAB 2: QUẢN TRỊ (BẢN NÂNG CẤP AUDIT) ---
+    # --- TAB 2: QUẢN TRỊ HỆ THỐNG ---
     with tab_admin:
         st.title("📥 Quản Trị & Điều Hành Chi Nhánh")
-        ad_sub1, ad_sub2, ad_sub3 = st.tabs(["➕ NHẬP LIỆU", "🏢 TÌNH TRẠNG CHI NHÁNH", "📜 TRUY VẾT & AUDIT"])
+        ad_sub1, ad_sub2, ad_sub3 = st.tabs(["➕ NHẬP LIỆU", "🏢 CHI NHÁNH", "📜 AUDIT"])
 
         with ad_sub1:
             c_up, c_man = st.columns([4, 6])
+            
             with c_up:
                 st.subheader("📂 CSV Import")
-                up_file = st.file_uploader("Upload CSV", type="csv")
+                up_file = st.file_uploader("Chọn file CSV", type="csv", key="csv_admin")
                 if up_file:
                     df_up = pd.read_csv(up_file)
-                    b_id = f"BATCH_{datetime.now().strftime('%m%d_%H%M')}"
-                    df_up['batch_id'], df_up['created_at'] = b_id, datetime.now().isoformat()
-                    if st.button(f"🚀 Nạp Lô {b_id}"):
+                    batch_id = f"BATCH_{datetime.now().strftime('%m%d_%H%M')}"
+                    df_up['batch_id'] = batch_id
+                    df_up['created_at'] = datetime.now().isoformat()
+                    if st.button(f"🚀 Nạp Lô {batch_id}", use_container_width=True):
+                        if 'compensation' in df_up.columns:
+                            df_up['compensation'] = pd.to_numeric(df_up['compensation']).fillna(0)
                         supabase.table("repair_cases").upsert(df_up.to_dict(orient='records')).execute()
                         st.cache_data.clear()
                         st.rerun()
-            with c_man:
-            # FORM NHẬP TAY CHUẨN ENTERPRISE
-            with st.form("f_man_enterprise", clear_on_submit=True):
-                st.subheader("✍️ Nhập ca sửa chữa đơn lẻ")
-                c1, c2 = st.columns(2)
-                with c1:
-                    f_machine = st.text_input("Mã máy *")
-                    f_branch = st.selectbox("Chi nhánh *", ["Miền Bắc", "Miền Trung", "Miền Nam"])
-                    f_cost = st.number_input("Chi phí thực tế (đ)", min_value=0, step=10000)
-                with c2:
-                    f_confirmer = st.text_input("Người xác nhận *")
-                    f_confirmed_date = st.date_input("Ngày xác nhận", value=datetime.now())
-                    # Sửa theo ý sếp: Nhân viên tự đánh nguyên nhân thay vì chọn mẫu
-                    f_reason = st.text_input("Nguyên nhân hư hỏng *", placeholder="VD: Bể bạc đạn, chập mạch...")
-                
-                f_note = st.text_area("Ghi chú chi tiết (nếu có)")
 
-                if st.form_submit_button("💾 Lưu vào cơ sở dữ liệu", use_container_width=True, type="primary"):
-                    if not f_machine or not f_confirmer or not f_reason:
-                        st.warning("⚠️ Vui lòng điền đủ: Mã máy, Người xác nhận và Nguyên nhân.")
-                    else:
-                        # Gói dữ liệu khớp hoàn toàn với cấu trúc bảng Supabase
-                        record = {
-                            "machine_id": f_machine.strip().upper(),
-                            "branch": f_branch,
-                            "compensation": float(f_cost),
-                            "confirmed_by": f_confirmer.strip(),
-                            "confirmed_date": f_confirmed_date.isoformat(),
-                            "issue_reason": f_reason.strip(), # Nhân viên tự đánh
-                            "note": f_note.strip() if f_note else "",
-                            "batch_id": f"MANUAL_{datetime.now().strftime('%Y%m%d')}",
-                            "created_at": datetime.now().isoformat()
-                        }
-                        
-                        try:
-                            # Thực thi lệnh insert
-                            supabase.table("repair_cases").insert(record).execute()
-                            st.success("✅ Đã lưu ca sửa chữa thành công!")
-                            st.cache_data.clear()
-                            st.rerun()
-                        except Exception as e:
-                            # Hiện lỗi chi tiết để debug nếu API vẫn từ chối
-                            st.error(f"Lỗi Database: {e}")
+            with c_man:
+                # FIX LỖI THỤT LỀ Ở ĐÂY
+                with st.form("f_man_enterprise", clear_on_submit=True):
+                    st.subheader("✍️ Nhập ca sửa chữa đơn lẻ")
+                    m1, m2 = st.columns(2)
+                    
+                    with m1:
+                        f_machine = st.text_input("Mã máy *")
+                        f_branch = st.selectbox("Chi nhánh *", ["Miền Bắc", "Miền Trung", "Miền Nam"])
+                        f_cost = st.number_input("Chi phí thực tế (đ)", min_value=0, step=10000)
+                    
+                    with m2:
+                        f_confirmer = st.text_input("Người xác nhận *")
+                        f_confirmed_date = st.date_input("Ngày xác nhận", value=datetime.now())
+                        # SỬA LẠI: Cho phép nhân viên tự đánh nguyên nhân
+                        f_reason = st.text_input("Nguyên nhân hư hỏng *", placeholder="VD: Hỏng motor, gãy khớp...")
+                    
+                    f_note = st.text_area("Ghi chú chi tiết (nếu có)")
+                    
+                    # Nút submit nằm trong khối Form
+                    submit_btn = st.form_submit_button("💾 Lưu vào cơ sở dữ liệu", use_container_width=True, type="primary")
+                    
+                    if submit_btn:
+                        if not f_machine or not f_confirmer or not f_reason:
+                            st.warning("⚠️ Vui lòng điền đủ các trường có dấu (*)")
+                        else:
+                            record = {
+                                "machine_id": f_machine.strip().upper(),
+                                "branch": f_branch,
+                                "compensation": float(f_cost),
+                                "confirmed_by": f_confirmer.strip(),
+                                "confirmed_date": f_confirmed_date.isoformat(),
+                                "issue_reason": f_reason.strip(),
+                                "note": f_note.strip() if f_note else "",
+                                "batch_id": f"MANUAL_{datetime.now().strftime('%Y%m%d')}",
+                                "created_at": datetime.now().isoformat()
+                            }
+                            try:
+                                supabase.table("repair_cases").insert(record).execute()
+                                st.success("✅ Đã lưu ca sửa chữa!")
+                                st.cache_data.clear()
+                                st.rerun()
+                            except Exception as e:
+                                st.error(f"Lỗi Database: {e}")
 
         with ad_sub2:
-            sel_branch = st.selectbox("Chọn chi nhánh xem nhanh", ["Miền Bắc", "Miền Trung", "Miền Nam"])
-            df_b = df_db[df_db['branch'] == sel_branch]
+            st.subheader("🏢 Theo dõi vận hành theo chi nhánh")
+            sel_b = st.selectbox("Chọn chi nhánh xem nhanh", ["Miền Bắc", "Miền Trung", "Miền Nam"])
+            df_b = df_db[df_db['branch'] == sel_b] if not df_db.empty else pd.DataFrame()
             if not df_b.empty:
-                m_view = df_b.groupby('machine_id').agg(so_lan=('id','count'), tong_tien=('CHI_PHÍ','sum')).reset_index()
-                st.dataframe(m_view.sort_values('so_lan', ascending=False), use_container_width=True, hide_index=True)
+                m_view = df_b.groupby('machine_id').agg(ca=('id','count'), tien=('CHI_PHÍ','sum')).reset_index()
+                st.dataframe(m_view.sort_values('ca', ascending=False), use_container_width=True, hide_index=True)
 
         with ad_sub3:
-            if 'batch_id' in df_db.columns:
-                history = df_db.groupby('batch_id').agg(dong=('id','count'), tien=('CHI_PHÍ','sum'), ngay=('created_dt','max')).reset_index()
-                st.dataframe(history.sort_values('ngay', ascending=False), use_container_width=True)
-                target = st.selectbox("Chọn lô Rollback:", history['batch_id'].unique())
-                if st.button("🗑️ XOÁ VĨNH VIỄN LÔ NÀY"):
-                    supabase.table("repair_cases").delete().eq("batch_id", target).execute()
-                    st.cache_data.clear()
-                    st.rerun()
+            st.subheader("📜 Nhật ký nhập liệu")
+            if not df_db.empty and 'batch_id' in df_db.columns:
+                history = df_db.groupby('batch_id').agg(dong=('id','count'), ngay=('created_dt','max')).reset_index()
+                st.dataframe(history.sort_values('ngay', ascending=False), use_container_width=True, hide_index=True)
     with tab_ai:
         st.title("🧠 Trợ Lý AI Phân Tích")
         
