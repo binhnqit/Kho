@@ -268,8 +268,8 @@ def main():
                 # ---------- DRILL DOWN ----------
                 st.divider()
                 st.subheader("🔍 Drill-down chi tiết theo thiết bị")
-                sel_machine = st.selectbox("Chọn máy để xem lịch sử", sorted(df_view['machine_id'].unique()))
-                df_machine = df_view[df_view['machine_id'] == sel_machine]
+                sel_machine = st.selectbox("Chọn máy để xem lịch sử", sorted(df_view['machine_code'].unique()))
+                df_machine = df_view[df_view['machine_code'] == sel_machine]
                 st.dataframe(df_machine.sort_values('confirmed_dt', ascending=False), use_container_width=True)
             else:
                 st.warning("Không có dữ liệu phù hợp với bộ lọc.")
