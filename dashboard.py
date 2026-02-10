@@ -14,26 +14,53 @@ supabase = create_client(url, key)
 def load_repair_data_final():
     try:
         res = supabase.table("repair_cases").select("*").order("created_at", desc=True).execute()
-        if not res.data: return pd.DataFrame()
+        if not res.data: 
+            return pd.DataFrame()
         
         df = pd.DataFrame(res.data)
         
-        # --- ĐỒNG BỘ CỘT NGÀY THEO SCHEMA ---
-        df['confirmed_dt'] = pd.to_datetime(df['confirmed_date'], errors='coerce')
+        # 1. XỬ LÝ NGÀY THÁNG (An toàn như code Finance)
+        # Chuyển đổi tất cả các cột ngày liên quan
         df['created_dt'] = pd.to_datetime(df['created_at'], errors='coerce')
+        df['confirmed_dt_raw'] = pd.to_datetime(df['confirmed_date'], errors='coerce')
+
+        # Hướng xử lý: Nếu chưa có ngày xác nhận, lấy ngày tạo để không bị mất dòng trong báo cáo
+        df['confirmed_dt'] = df['confirmed_dt_raw'].fillna(df['created_dt'])
         
+        # Loại bỏ những dòng thực sự không có bất kỳ thông tin thời gian nào (rất hiếm)
         df = df.dropna(subset=['confirmed_dt'])
 
+        # 2. TRÍCH XUẤT THÔNG TIN THỜI GIAN
         df['NĂM'] = df['confirmed_dt'].dt.year.astype(int)
         df['THÁNG'] = df['confirmed_dt'].dt.month.astype(int)
-        day_map = {'Monday': 'Thứ 2', 'Tuesday': 'Thứ 3', 'Wednesday': 'Thứ 4',
-                   'Thursday': 'Thứ 5', 'Friday': 'Thứ 6', 'Saturday': 'Thứ 7', 'Sunday': 'Chủ Nhật'}
+        
+        day_map = {
+            'Monday': 'Thứ 2', 'Tuesday': 'Thứ 3', 'Wednesday': 'Thứ 4',
+            'Thursday': 'Thứ 5', 'Friday': 'Thứ 6', 'Saturday': 'Thứ 7', 'Sunday': 'Chủ Nhật'
+        }
         df['THỨ'] = df['confirmed_dt'].dt.day_name().map(day_map)
 
-        # --- ĐỒNG BỘ CỘT CHI PHÍ THEO SCHEMA ---
-        df['CHI_PHÍ'] = pd.to_numeric(df['compensation'], errors='coerce').fillna(0)
+        # 3. XỬ LÝ CHI PHÍ (Cực kỳ quan trọng vì schema của bạn có cả boolean và numeric)
+        def clean_compensation(val):
+            if isinstance(val, bool): # Nếu Supabase trả về True/False
+                return 0.0
+            try:
+                # Ép kiểu về số, xóa dấu phẩy nếu có (giống code Finance)
+                return float(str(val).replace(',', ''))
+            except:
+                return 0.0
+
+        df['CHI_PHÍ'] = df['compensation'].apply(clean_compensation)
         
-        return df.sort_values(by='created_dt', ascending=False)
+        # 4. CHUẨN HÓA TEXT (Tránh lỗi lọc do chữ hoa/thường hoặc khoảng trắng)
+        if 'branch' in df.columns:
+            df['branch'] = df['branch'].fillna('Chưa phân loại').str.strip()
+        if 'machine_id' in df.columns:
+            df['machine_id'] = df['machine_id'].fillna('N/A').str.strip()
+
+        # Trả về kết quả đã sắp xếp, giữ nguyên tên các cột để không lỗi code hiển thị
+        return df.sort_values(by='confirmed_dt', ascending=False)
+
     except Exception as e:
         st.error(f"Lỗi hệ thống tải data: {e}")
         return pd.DataFrame()
