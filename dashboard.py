@@ -43,7 +43,12 @@ def main():
     st.set_page_config(page_title="4ORANGES OPS 2026", layout="wide", page_icon="🎨")
     df_db = load_repair_data_final()
 
-    tab_dash, tab_admin, tab_ai = st.tabs(["📊 BÁO CÁO VẬN HÀNH", "📥 QUẢN TRỊ HỆ THỐNG", "🧠 AI INSIGHTS"])
+    tab_dash, tab_admin, tab_alert, tab_ai = st.tabs([
+        "📊 BÁO CÁO VẬN HÀNH", 
+        "📥 QUẢN TRỊ HỆ THỐNG", 
+        "🚨 CẢNH BÁO VẬN HÀNH", # Tab mới thêm vào
+        "🧠 AI INSIGHTS"
+    ])
 
     # =============================================================================
     # 📊 TAB BÁO CÁO VẬN HÀNH – ENTERPRISE EDITION
@@ -377,6 +382,112 @@ def main():
                     st.code(e)
                 st.warning("Mẹo: Đảm bảo bạn đã tạo bảng 'audit_logs' trong Supabase SQL Editor với các cột: id, action, table_name, actor, payload, created_at.")
 
+    with tab_alert:
+        st.title("🚨 Trung Tâm Cảnh Báo Vận Hành")
+        st.caption("Phát hiện sớm rủi ro – Giảm chi phí – Hành động kịp thời")
+
+        if df_db.empty or len(df_db) < 3: # Giảm ngưỡng để dễ test dữ liệu
+            st.info("📭 Chưa đủ dữ liệu để kích hoạt hệ thống cảnh báo.")
+        else:
+            # Chuẩn bị dữ liệu thời gian
+            today = pd.Timestamp.now()
+            df_db['week'] = df_db['confirmed_dt'].dt.isocalendar().week
+            df_db['year'] = df_db['confirmed_dt'].dt.year
+
+            # Tách dữ liệu tuần này và tuần trước
+            this_week = df_db[df_db['week'] == today.isocalendar().week]
+            last_week = df_db[df_db['week'] == today.isocalendar().week - 1]
+
+            # 1️⃣ KPI TỔNG QUAN
+            c1, c2, c3, c4 = st.columns(4)
+            c1.metric("🚨 Tổng ca sửa chữa", f"{len(df_db)} ca")
+            
+            curr_cost = this_week['compensation'].sum()
+            prev_cost = last_week['compensation'].sum()
+            c2.metric(
+                "💰 Chi phí tuần này", 
+                f"{curr_cost:,.0f} đ",
+                delta=f"{curr_cost - prev_cost:,.0f} đ" if not last_week.empty else None,
+                delta_color="inverse" # Đỏ nếu tăng chi phí
+            )
+
+            c3.metric(
+                "🛠️ Số ca tuần này", 
+                len(this_week),
+                delta=len(this_week) - len(last_week) if not last_week.empty else None,
+                delta_color="inverse"
+            )
+
+            risk_branch = this_week['branch'].value_counts().idxmax() if not this_week.empty else "N/A"
+            c4.metric("🏢 Nhánh rủi ro nhất", risk_branch)
+
+            st.divider()
+
+            # 2️⃣ CẢNH BÁO CHI PHÍ THEO CHI NHÁNH
+            st.subheader("💰 Cảnh báo vượt ngưỡng chi phí")
+            branch_cost = df_db.groupby('branch').agg(
+                total_cost=('compensation', 'sum'),
+                avg_cost=('compensation', 'mean'),
+                cases=('id', 'count')
+            ).reset_index()
+
+            # Ngưỡng: Tổng chi phí > (Trung bình chi phí mỗi nhánh * 1.5)
+            avg_all_branches = branch_cost['total_cost'].mean()
+            branch_cost['threshold'] = avg_all_branches * 1.2 
+            branch_cost['status'] = branch_cost['total_cost'] > branch_cost['threshold']
+
+            high_cost_branch = branch_cost[branch_cost['status']]
+
+            if not high_cost_branch.empty:
+                st.error("⚠️ Phát hiện chi nhánh có tổng chi phí bất thường")
+                st.dataframe(high_cost_branch, use_container_width=True)
+            else:
+                st.success("✅ Chi phí các chi nhánh đang trong tầm kiểm soát")
+
+            st.divider()
+
+            # 3️⃣ CẢNH BÁO MÁY SỬA QUÁ NHIỀU
+            st.subheader("🛠️ Thiết bị có tần suất sửa bất thường")
+            machine_stats = df_db.groupby(['machine_id', 'branch']).agg(
+                total_cases=('id', 'count'),
+                total_cost=('compensation', 'sum')
+            ).reset_index()
+
+            # Ngưỡng sửa > trung bình + 1 (áp dụng cho tập dữ liệu nhỏ)
+            case_threshold = machine_stats['total_cases'].mean() + 1
+            risky_machines = machine_stats[machine_stats['total_cases'] > case_threshold]
+
+            if not risky_machines.empty:
+                st.warning(f"⚠️ Phát hiện {len(risky_machines)} thiết bị sửa hơn {case_threshold:.1f} lần")
+                st.dataframe(risky_machines.sort_values('total_cases', ascending=False), use_container_width=True)
+            else:
+                st.success("✅ Không có máy nào hỏng quá thường xuyên")
+
+            st.divider()
+
+            # 4️⃣ SO SÁNH XU HƯỚNG
+            st.subheader("📈 Xu hướng vận hành (Tuần này vs Tuần trước)")
+            trend_data = pd.DataFrame({
+                "Chỉ số": ["Số lượng ca", "Tổng chi phí"],
+                "Tuần trước": [len(last_week), prev_cost],
+                "Tuần này": [len(this_week), curr_cost]
+            })
+            st.table(trend_data) # Dùng table để hiển thị tĩnh cho rõ ràng
+
+            # 5️⃣ ĐIỂM RỦI RO (RISK SCORE)
+            st.subheader("🎯 Top 5 đối tượng cần kiểm tra ngay")
+            priority = machine_stats.copy()
+            # Tính toán risk score từ 0-1
+            max_cases = priority['total_cases'].max() if not priority.empty else 1
+            max_cost = priority['total_cost'].max() if not priority.empty else 1
+            
+            priority['risk_score'] = (
+                0.6 * (priority['total_cases'] / max_cases) + 
+                0.4 * (priority['total_cost'] / max_cost)
+            ).round(2)
+
+            top_risk = priority.sort_values('risk_score', ascending=False).head(5)
+            st.dataframe(top_risk, use_container_width=True)
     # --- TAB 3: AI INSIGHTS ---
     with tab_ai:
         st.title("🧠 AI Decision Intelligence")
