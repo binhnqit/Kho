@@ -109,6 +109,14 @@ def load_repair_data_final():
         df['CHI_PHÍ'] = pd.to_numeric(df['compensation'], errors='coerce').fillna(0)
         
         return df.sort_values(by='confirmed_dt', ascending=False)
+              # --- BƯỚC FIX LỖI CHI NHÁNH ---
+        if 'branch' in df.columns:
+            # 1. Xóa bỏ hoàn toàn các dòng mà cột branch bị rỗng
+            df = df.dropna(subset=['branch'])
+            # 2. Xóa khoảng trắng thừa (biến "Miền Bắc " thành "Miền Bắc")
+            df['branch'] = df['branch'].astype(str).str.strip()
+            # 3. Loại bỏ các dòng mà sau khi strip xong bị rỗng hoặc là chữ "None"/"nan"
+            df = df[~df['branch'].isin(['', 'None', 'nan', 'NaN'])]
     except Exception as e:
         st.error(f"Lỗi hệ thống tải data: {e}")
         return pd.DataFrame()
