@@ -1,6 +1,6 @@
 import streamlit as st
-import pandas as pd
 from services.repair_service import get_repair_data
+from tabs.dashboard import render_dashboard  # <--- THÊM DÒNG NÀY
 
 # 1. Cấu hình trang (Luôn để ở dòng đầu tiên)
 st.set_page_config(
@@ -31,11 +31,8 @@ def main():
             st.rerun()
 
     # 5. Khởi tạo các Tabs chính
-    tab_dash, tab_admin, tab_alert = st.tabs([
-        "📊 Báo cáo vận hành", 
-        "📥 Quản trị & Nhập liệu", 
-        "🚨 Cảnh báo rủi ro"
-    ])
+    with tab_dash:
+        render_dashboard(df_db) # <--- GỌI HÀM CỰC KỲ GỌN
 
     # 6. Điều hướng nội dung (Sau này sẽ gọi từ thư mục tabs/)
     with tab_dash:
