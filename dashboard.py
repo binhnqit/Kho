@@ -115,9 +115,11 @@ def load_repair_data_final():
 
 # 6. ĐIỀU HƯỚNG CHÍNH
 def main():
+    # 1. Khởi tạo trạng thái đăng nhập
     if "is_logged_in" not in st.session_state:
         st.session_state["is_logged_in"] = False
 
+    # 2. KIỂM TRA ĐIỀU KIỆN ĐĂNG NHẬP
     if not st.session_state["is_logged_in"]:
         col1, col2, col3 = st.columns([1, 2, 1])
         with col2:
@@ -126,17 +128,18 @@ def main():
                 login_form()
             else:
                 registration_form()
-    else:
-        # Sidebar UI
-        with st.sidebar:
-            st.success(f"👤 {st.session_state['user_info']['full_name']}")
-            st.info(f"🔑 Vai trò: {st.session_state['user_info'].get('role', 'User')}")
-            if st.button("Đăng xuất", key="logout_btn", type="primary", use_container_width=True):
-                st.session_state["is_logged_in"] = False
-                st.rerun()
+        # Dừng app tại đây nếu chưa đăng nhập để không chạy tiếp xuống dưới
+        return 
 
-        # Tải dữ liệu cho Dashboard
-        df_db = load_repair_data_final()
+    # 3. NẾU ĐÃ ĐĂNG NHẬP THÌ MỚI CHẠY TIẾP PHẦN NÀY
+    with st.sidebar:
+        st.success(f"👤 {st.session_state['user_info']['full_name']}")
+        if st.button("Đăng xuất", key="logout_btn", type="primary", use_container_width=True):
+            st.session_state["is_logged_in"] = False
+            st.rerun()
+
+    # CHỈ KHI ĐĂNG NHẬP XONG MỚI GỌI df_db
+    df_db = load_repair_data_final()
     tab_dash, tab_admin, tab_ai, tab_alert, tab_kpi = st.tabs([
         "📊 BÁO CÁO VẬN HÀNH", 
         "📥 QUẢN TRỊ HỆ THỐNG", 
