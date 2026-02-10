@@ -37,29 +37,7 @@ def load_repair_data_final():
     except Exception as e:
         st.error(f"Lỗi hệ thống tải data: {e}")
         return pd.DataFrame()
-def write_audit_log(action, table_name, record_id=None, old_data=None, new_data=None):
-    """
-    Ghi nhật ký hệ thống. 
-    user_ctx lấy từ session_state (giả định bạn đã lưu khi login)
-    """
-    try:
-        # Lấy thông tin người dùng từ session_state
-        user_id = st.session_state.get('user_id', '00000000-0000-0000-0000-000000000000')
-        user_role = st.session_state.get('user_role', 'guest')
 
-        audit = {
-            "user_id": user_id,
-            "user_role": user_role,
-            "action": action,
-            "table_name": table_name,
-            "record_id": str(record_id) if record_id else None,
-            "old_data": old_data, # Supabase nhận dict cho cột jsonb
-            "new_data": new_data,
-            "created_at": datetime.now().isoformat()
-        }
-        supabase.table("audit_logs").insert(audit).execute()
-    except Exception as e:
-        st.error(f"Lỗi ghi Audit Log: {e}")
 # --- 3. GIAO DIỆN CHÍNH ---
 def main():
     st.set_page_config(page_title="4ORANGES OPS 2026", layout="wide", page_icon="🎨")
@@ -340,7 +318,7 @@ def main():
                                 supabase.table("audit_logs").insert(audit).execute()
                                 st.success("✅ Lưu & audit thành công")
                                 st.cache_data.clear()
-                                st.rerun()                                
+                                st.rerun()
                             except Exception as e:
                                 st.error(f"❌ Lỗi DB: {e}")
 
@@ -367,68 +345,43 @@ def main():
         # ---------------------------------------------------------
         # SUB-TAB 3: AUDIT LOG
         # ---------------------------------------------------------
-        with ad_sub3: # Tab 📜 AUDIT LOG
-    st.subheader("📜 Nhật ký vận hành hệ thống")
-    
-    # --- PHẦN BỘ LỌC (FILTERS) ---
-    c1, c2, c3 = st.columns(3)
-    with c1:
-        filter_role = st.multiselect("Vai trò", ["admin", "editor", "viewer"], default=[])
-    with c2:
-        filter_action = st.multiselect("Hành động", ["INSERT", "UPDATE", "DELETE", "IMPORT"], default=[])
-    with c3:
-        search_id = st.text_input("Tìm Record ID / Machine ID")
+        with ad_sub3:
+            st.subheader("📜 Nhật ký Audit hệ thống")
+            
+            # Nút làm mới tay để tránh việc cache làm mất log mới
+            if st.button("🔄 Làm mới Nhật ký"):
+                st.rerun()
 
-    # --- TRUY VẤN DỮ LIỆU ---
-    query = supabase.table("audit_logs").select("*").order("created_at", desc=True).limit(500)
-    
-    # Áp dụng filter động (nếu có chọn)
-    if filter_role:
-        query = query.in_("user_role", filter_role)
-    if filter_action:
-        query = query.in_("action", filter_action)
-    
-    res_audit = query.execute()
-    
-    if res_audit.data:
-        df_audit = pd.DataFrame(res_audit.data)
-        
-        # Định dạng hiển thị
-        df_audit['time'] = pd.to_datetime(df_audit['created_at']).dt.strftime('%d/%m %H:%M:%S')
-        
-        # Hiển thị bảng tổng quát
-        st.dataframe(
-            df_audit[['time', 'user_role', 'action', 'table_name', 'record_id']],
-            use_container_width=True,
-            column_config={
-                "time": "Thời gian",
-                "user_role": "Vai trò",
-                "action": "Hành động",
-                "table_name": "Bảng",
-                "record_id": "ID bản ghi"
-            }
-        )
-        
-        # --- XEM CHI TIẾT SỰ THAY ĐỔI (Dành cho Quản trị viên) ---
-        st.divider()
-        st.subheader("🔍 Chi tiết thay đổi dữ liệu")
-        selected_log_idx = st.selectbox("Chọn dòng nhật ký để xem nội dung chi tiết", 
-                                        options=df_audit.index,
-                                        format_func=lambda x: f"Dòng {x} - {df_audit.iloc[x]['action']} ({df_audit.iloc[x]['time']})")
-        
-        detail_col1, detail_col2 = st.columns(2)
-        log_row = df_audit.iloc[selected_log_idx]
-        
-        with detail_col1:
-            st.caption("Dữ liệu cũ (Old Data)")
-            st.json(log_row['old_data'] if log_row['old_data'] else {})
-            
-        with detail_col2:
-            st.caption("Dữ liệu mới (New Data)")
-            st.json(log_row['new_data'] if log_row['new_data'] else {})
-            
-    else:
-        st.info("Không tìm thấy nhật ký phù hợp với bộ lọc.")
+            try:
+                # Thực hiện truy vấn trực tiếp vào bảng audit_logs
+                res_audit = supabase.table("audit_logs").select("*").order("created_at", desc=True).limit(100).execute()
+                
+                if res_audit.data:
+                    df_audit = pd.DataFrame(res_audit.data)
+                    
+                    # Định dạng lại cột thời gian cho dễ nhìn
+                    if 'created_at' in df_audit.columns:
+                        df_audit['created_at'] = pd.to_datetime(df_audit['created_at']).dt.strftime('%Y-%m-%d %H:%M:%S')
+                    
+                    # Hiển thị bảng log
+                    st.dataframe(
+                        df_audit, 
+                        use_container_width=True,
+                        column_config={
+                            "payload": st.column_config.TextColumn("Dữ liệu chi tiết", width="medium"),
+                            "action": st.column_config.TextColumn("Hành động"),
+                            "created_at": st.column_config.TextColumn("Thời gian")
+                        }
+                    )
+                else:
+                    st.info("ℹ️ Hiện tại chưa có bản ghi nhật ký nào trong bảng 'audit_logs'.")
+                    st.caption("Gợi ý: Hãy thử thực hiện một lệnh Nhập liệu để tạo log.")
+                    
+            except Exception as e:
+                st.error("❌ Không thể kết nối với bảng 'audit_logs'")
+                with st.expander("Chi tiết lỗi kỹ thuật"):
+                    st.code(e)
+                st.warning("Mẹo: Đảm bảo bạn đã tạo bảng 'audit_logs' trong Supabase SQL Editor với các cột: id, action, table_name, actor, payload, created_at.")
 
     with tab_alert:
         st.title("🚨 Trung Tâm Cảnh Báo Vận Hành")
