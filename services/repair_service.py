@@ -1,46 +1,48 @@
 import pandas as pd
+import streamlit as st
 from core.database import supabase
 
 def get_repair_data():
-    """Lấy toàn bộ dữ liệu từ database và chuẩn hóa"""
     try:
-        # 1. Lấy dữ liệu repair_cases (Dùng limit để vượt ngưỡng 1000 nếu cần)
-        # Nếu data của bạn cực lớn, cần dùng vòng lặp, hiện tại ta tăng limit lên 5000
-        res_repair = supabase.table("repair_cases").select("*").limit(5000).execute()
-        df = pd.DataFrame(res_repair.data)
-
-        if df.empty:
+        # 1. Tải dữ liệu repair_cases (Tiếp thu: Sắp xếp desc và lấy toàn bộ)
+        res = supabase.table("repair_cases").select("*").order("created_at", desc=True).execute()
+        if not res.data: 
             return pd.DataFrame()
-
-        # 2. Lấy dữ liệu bảng machines để mapping
+        
+        df = pd.DataFrame(res.data)
+        
+        # 2. Tải dữ liệu machines để map mã máy (Quan trọng để hiển thị 1641...)
         res_m = supabase.table("machines").select("id, machine_code").execute()
         map_dict = {m['id']: str(m['machine_code']) for m in res_m.data}
 
-        # 3. CHUẨN HÓA DỮ LIỆU
-        # Map UUID sang Mã máy
-        df['machine_display'] = df['machine_id'].map(map_dict).fillna("MÁY LẠ (ID sai)")
-        
-        # Xử lý ngày tháng: confirmed_date
-        # errors='coerce' sẽ biến các ngày sai định dạng thành NaT (Not a Time)
+        # 3. CHUẨN HÓA NGÀY THÁNG (Tiếp thu: dropna và Thứ tiếng Việt)
         df['confirmed_dt'] = pd.to_datetime(df['confirmed_date'], errors='coerce')
+        df['created_dt'] = pd.to_datetime(df['created_at'], errors='coerce')
         
-        # Loại bỏ dữ liệu rác nếu năm quá lớn (ví dụ năm > 2025) hoặc bị trống
-        # Bạn có thể điều chỉnh mốc năm này
-        current_year = 2025 
-        df = df[df['confirmed_dt'].dt.year <= current_year]
-        
-        # Trích xuất Năm và Tháng sau khi đã lọc rác
+        # Loại bỏ dòng không có ngày để tránh lỗi biểu đồ
+        df = df.dropna(subset=['confirmed_dt'])
+
+        # Tiếp thu: Mapping Thứ trong tuần
+        day_map = {
+            'Monday': 'Thứ 2', 'Tuesday': 'Thứ 3', 'Wednesday': 'Thứ 4',
+            'Thursday': 'Thứ 5', 'Friday': 'Thứ 6', 'Saturday': 'Thứ 7', 'Sunday': 'Chủ Nhật'
+        }
         df['NĂM'] = df['confirmed_dt'].dt.year.astype(int)
         df['THÁNG'] = df['confirmed_dt'].dt.month.astype(int)
-        
-        # Ép kiểu số cho chi phí
+        df['THỨ'] = df['confirmed_dt'].dt.day_name().map(day_map)
+
+        # 4. CHUẨN HÓA HIỂN THỊ VÀ CHI PHÍ
+        df['machine_display'] = df['machine_id'].map(map_dict).fillna("MÁY LẠ/ID SAI")
         df['CHI_PHÍ'] = pd.to_numeric(df['compensation'], errors='coerce').fillna(0)
 
-        return df
+        # Lưu ý: Hiện tại đang là năm 2026, nếu data có năm 2026 là chính xác với thực tế hiện tại.
+        
+        return df.sort_values(by='created_dt', ascending=False)
+
     except Exception as e:
-        print(f"Lỗi tại Service: {e}")
+        st.error(f"❌ Lỗi hệ thống tải data: {e}")
         return pd.DataFrame()
 
 def insert_new_repair(data_dict):
-    """Hàm chèn dữ liệu mới"""
+    """Hàm chèn dữ liệu mới dùng cho Tab Admin"""
     return supabase.table("repair_cases").insert(data_dict).execute()
