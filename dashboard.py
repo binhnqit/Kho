@@ -205,7 +205,7 @@ def main():
         # SUB-TAB 1: NHẬP LIỆU
         # ---------------------------------------------------------
         # Giả sử đây là bên trong hàm main() hoặc nơi bạn định nghĩa Tab ad_sub1
-with ad_sub1:
+        with ad_sub1:
     # Dòng này phải thụt lề vào 4 dấu cách so với 'with'
     c_up, c_man = st.columns([5, 5])
 
