@@ -200,12 +200,7 @@ def main():
         st.title("📥 Quản Trị & Điều Hành Chi Nhánh")
 
         # Khởi tạo các Sub-tabs bên trong Tab Quản trị
-        ad_sub1, ad_sub2, ad_sub3 = st.tabs([
-            "➕ NHẬP LIỆU", 
-            "🏢 CHI NHÁNH", 
-            "📜 AUDIT LOG"
-        ])
-
+        ad_sub1, ad_sub2, ad_sub3 = st.tabs(["➕ NHẬP LIỆU", "🏢 CHI NHÁNH", "📜 AUDIT LOG"])
         # ---------------------------------------------------------
         # SUB-TAB 1: NHẬP LIỆU
         # ---------------------------------------------------------
