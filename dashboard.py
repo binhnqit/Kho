@@ -9,7 +9,7 @@ url = "https://cigbnbaanpebwrufzxfg.supabase.co"
 key = st.secrets["SUPABASE_KEY"]
 supabase = create_client(url, key)
 
-# --- 2. HÀM XỬ LÝ DỮ LIỆU CHUẨN ---
+# --- 2. HÀM XỬ LÝ DỮ LIỆU (BẢO TỒN DI SẢN) ---
 @st.cache_data(ttl=30)
 def load_repair_data_final():
     try:
@@ -18,9 +18,14 @@ def load_repair_data_final():
         
         df = pd.DataFrame(res.data)
         
-        # Đồng bộ cột ngày theo ảnh cấu trúc sếp gửi (confirmed_)
-        df['confirmed_dt'] = pd.to_datetime(df['confirmed_'], errors='coerce')
+        # --- FIX CỘT NGÀY (Mapping di sản sang DB thực tế) ---
+        # Kiểm tra nếu DB dùng 'confirmed_' thay vì 'confirmed_date'
+        target_date_col = 'confirmed_' if 'confirmed_' in df.columns else 'confirmed_date'
+        
+        df['confirmed_dt'] = pd.to_datetime(df[target_date_col], errors='coerce')
         df['created_dt'] = pd.to_datetime(df['created_at'], errors='coerce')
+        
+        # Loại bỏ dòng không có ngày để tránh lỗi biểu đồ
         df = df.dropna(subset=['confirmed_dt'])
 
         # Chiều thời gian
@@ -30,8 +35,10 @@ def load_repair_data_final():
                    'Thursday': 'Thứ 5', 'Friday': 'Thứ 6', 'Saturday': 'Thứ 7', 'Sunday': 'Chủ Nhật'}
         df['THỨ'] = df['confirmed_dt'].dt.day_name().map(day_map)
 
-        # Map đúng cột chi phí (compensation) thành CHI_PHÍ
+        # --- FIX CỘT CHI PHÍ ---
+        # Map đúng cột compensation từ DB thành CHI_PHÍ
         df['CHI_PHÍ'] = pd.to_numeric(df['compensation'], errors='coerce').fillna(0)
+        
         return df.sort_values(by='created_dt', ascending=False)
     except Exception as e:
         st.error(f"Lỗi hệ thống tải data: {e}")
@@ -42,7 +49,7 @@ def main():
     st.set_page_config(page_title="4ORANGES OPS 2026", layout="wide", page_icon="🎨")
     df_db = load_repair_data_final()
 
-    # KHAI BÁO TABS TẬP TRUNG
+    # Tabs tập trung
     tab_dash, tab_admin, tab_ai = st.tabs(["📊 BÁO CÁO VẬN HÀNH", "📥 QUẢN TRỊ HỆ THỐNG", "🧠 AI INSIGHTS"])
 
     # --- TAB 1: BÁO CÁO VẬN HÀNH ---
@@ -95,7 +102,6 @@ def main():
                     if st.button(f"🚀 Xác nhận nạp {len(df_up)} dòng", use_container_width=True):
                         try:
                             supabase.table("repair_cases").upsert(df_up.to_dict(orient='records')).execute()
-                            st.success("✅ Đã nạp dữ liệu thành công!")
                             st.cache_data.clear()
                             st.rerun()
                         except Exception as e:
@@ -106,18 +112,18 @@ def main():
                     st.subheader("✍️ Nhập ca sửa chữa đơn lẻ")
                     m1, m2 = st.columns(2)
                     with m1:
-                        f_machine = st.text_input("Mã máy (machine_) *")
+                        f_machine = st.text_input("Mã máy *")
                         f_branch = st.selectbox("Chi nhánh *", ["Miền Bắc", "Miền Trung", "Miền Nam"])
                         f_cost = st.number_input("Chi phí thực tế (đ)", min_value=0, step=10000)
                     with m2:
-                        f_customer = st.text_input("Tên khách hàng (customer_) *")
+                        f_customer = st.text_input("Tên khách hàng *")
                         f_confirmed_date = st.date_input("Ngày xác nhận", value=datetime.now())
-                        f_reason = st.text_input("Nguyên nhân hư hỏng *")
+                        f_reason = st.text_input("Nguyên nhân hư hỏng *") # Sếp muốn nhân viên tự đánh
                     
                     f_note = st.text_area("Ghi chú chi tiết")
                     if st.form_submit_button("💾 Lưu vào cơ sở dữ liệu", use_container_width=True, type="primary"):
                         if not f_machine or not f_customer or not f_reason:
-                            st.warning("⚠️ Vui lòng điền đủ: Mã máy, Khách hàng, Nguyên nhân.")
+                            st.warning("⚠️ Vui lòng điền đủ các trường (*)")
                         else:
                             record = {
                                 "machine_": f_machine.strip().upper(),
@@ -141,99 +147,54 @@ def main():
             st.subheader("🏢 Theo dõi vận hành theo chi nhánh")
             sel_b = st.selectbox("Chọn chi nhánh xem nhanh", ["Miền Bắc", "Miền Trung", "Miền Nam"])
             if not df_db.empty:
+                # Dùng machine_ (có gạch dưới) theo đúng DB sếp gửi
+                m_col = 'machine_' if 'machine_' in df_db.columns else 'machine_id'
                 df_b = df_db[df_db['branch'] == sel_b]
                 if not df_b.empty:
-                    m_view = df_b.groupby('machine_').agg(ca=('id','count'), tien=('CHI_PHÍ','sum')).reset_index()
-                    st.dataframe(m_view.sort_values('ca', ascending=False), use_container_width=True, hide_index=True)
+                    m_view = df_b.groupby(m_col).agg(ca=('id','count'), tien=('CHI_PHÍ','sum')).reset_index()
+                    st.dataframe(m_view.sort_values('ca', ascending=False), use_container_width=True)
 
         with ad_sub3:
             st.subheader("📜 Nhật ký gần đây")
             if not df_db.empty:
-                st.dataframe(df_db.head(20), use_container_width=True)
+                st.dataframe(df_db.head(10), use_container_width=True)
 
     # --- TAB 3: AI INSIGHTS ---
     with tab_ai:
         st.title("🧠 Trợ Lý AI Phân Tích")
-        if len(df_db) < 5:
-            st.warning("⚠️ Cần tối thiểu 5 ca để AI bắt đầu phân tích rủi ro.")
+        if df_db.empty or len(df_db) < 5:
+            st.warning("⚠️ Cần thêm dữ liệu để AI phân tích.")
         else:
+            # FIX: Đảm bảo dùng đúng tên cột machine_ cho toàn bộ AI
+            m_col_ai = 'machine_' if 'machine_' in df_db.columns else 'machine_id'
+            
             ai_1, ai_2, ai_3 = st.tabs(["🚩 CẢNH BÁO", "🏗️ RỦI RO THIẾT BỊ", "📊 DỰ BÁO"])
 
             with ai_1:
-                # Cảnh báo chi phí cao bất thường (Anomalies)
                 threshold = df_db['CHI_PHÍ'].mean() + 2 * df_db['CHI_PHÍ'].std()
                 anomalies = df_db[df_db['CHI_PHÍ'] > threshold]
                 if not anomalies.empty:
-                    st.error(f"Phát hiện {len(anomalies)} ca chi phí cao vượt ngưỡng an toàn!")
-                    st.dataframe(anomalies[['confirmed_', 'machine_', 'CHI_PHÍ', 'issue_reason']])
+                    st.error(f"Phát hiện {len(anomalies)} ca vượt ngưỡng chi phí!")
+                    st.dataframe(anomalies[['confirmed_dt', m_col_ai, 'CHI_PHÍ']])
                 else:
-                    st.success("Tất cả chi phí đều nằm trong tầm kiểm soát.")
+                    st.success("Không có bất thường chi phí.")
 
             with ai_2:
-                # Tính điểm rủi ro cho máy (Dựa trên tần suất hỏng và tổng chi phí)
-                m_stats = df_db.groupby('machine_').agg(count=('id','count'), cost=('CHI_PHÍ','sum')).reset_index()
-                m_stats['freq_score'] = m_stats['count'] / m_stats['count'].max()
-                m_stats['cost_score'] = m_stats['cost'] / m_stats['cost'].max()
-                m_stats['risk_index'] = (m_stats['freq_score'] * 0.7 + m_stats['cost_score'] * 0.3).round(2)
-                
-                st.plotly_chart(px.bar(m_stats.nlargest(10, 'risk_index'), x='risk_index', y='machine_', 
-                                       orientation='h', title="Top 10 Máy Cần Bảo Trì Định Kỳ (Risk Index)",
-                                       color='risk_index', color_continuous_scale='Reds'))
-    with tab_ai:
-        st.title("🧠 Trợ Lý AI Phân Tích")
-        
-        # 1. Hardening Data
-        cost_series = df_db['CHI_PHÍ'].dropna()
-        if len(cost_series) < 10:
-            st.warning("⚠️ Dữ liệu quá mỏng để AI phân tích. Cần tối thiểu 10 ca.")
-            st.stop()
+                m_stats = df_db.groupby(m_col_ai).agg(count=('id','count'), cost=('CHI_PHÍ','sum')).reset_index()
+                m_stats['risk_score'] = ((m_stats['count']/m_stats['count'].max())*0.6 + (m_stats['cost']/m_stats['cost'].max())*0.4).round(2)
+                st.plotly_chart(px.bar(m_stats.nlargest(10, 'risk_score'), x='risk_score', y=m_col_ai, orientation='h', title="Top 10 Máy Rủi Ro Cao"))
 
-        ai_1, ai_2, ai_3 = st.tabs(["🚩 CẢNH BÁO", "🏗️ RỦI RO THIẾT BỊ", "📊 DỰ BÁO"])
-
-        with ai_1:
-            # Anomaly Detection (2-Sigma)
-            threshold = cost_series.mean() + 2 * cost_series.std()
-            anomalies = df_db[df_db['CHI_PHÍ'] > threshold]
-            if not anomalies.empty:
-                st.error(f"Phát hiện {len(anomalies)} ca vượt ngưỡng chi phí an toàn!")
-                st.dataframe(anomalies[['confirmed_dt', 'machine_id', 'CHI_PHÍ']])
-            else:
-                st.success("Không phát hiện bất thường về chi phí.")
-
-        with ai_2:
-            # Risk Scoring (Normalized)
-            m_stats = df_db.groupby('machine_id').agg(count=('machine_id','count'), cost=('CHI_PHÍ','sum')).reset_index()
-            # Normalize về thang 0-1
-            m_stats['freq_norm'] = m_stats['count'] / m_stats['count'].max()
-            m_stats['cost_norm'] = m_stats['cost'] / m_stats['cost'].max()
-            m_stats['risk_score'] = (m_stats['freq_norm'] * 0.6 + m_stats['cost_norm'] * 0.4).round(2)
-            
-            st.plotly_chart(px.bar(m_stats.nlargest(10, 'risk_score'), x='risk_score', y='machine_id', orientation='h', title="Top 10 Máy Rủi Ro Cao (Đã Normalize)"))
-
-        with ai_3:
-            # Forecast & Latest Month Fix
-            monthly = df_db.groupby(['NĂM', 'THÁNG'])['CHI_PHÍ'].sum().reset_index()
-            if len(monthly) >= 2:
-                # Dùng MAX để lấy tháng mới nhất
-                latest_data = monthly.sort_values(['NĂM', 'THÁNG']).iloc[-1]
-                curr_month_val = latest_data['CHI_PHÍ']
-                forecast_val = monthly['CHI_PHÍ'].rolling(3, min_periods=1).mean().iloc[-1]
-                
-                # Bọc chia cho 0
-                diff = ((forecast_val / curr_month_val) - 1) * 100 if curr_month_val > 0 else 0
-                
-                c_f1, c_f2 = st.columns(2)
-                c_f1.metric("Dự báo tháng tới", f"{forecast_val:,.0f} đ")
-                c_f2.metric("Biến động dự kiến", f"{diff:.1f}%", delta=f"{diff:.1f}%", delta_color="inverse")
-
-            # NLP Parser nhẹ
+            with ai_3:
+                monthly = df_db.groupby(['NĂM', 'THÁNG'])['CHI_PHÍ'].sum().reset_index()
+                if len(monthly) >= 2:
+                    forecast_val = monthly['CHI_PHÍ'].rolling(3, min_periods=1).mean().iloc[-1]
+                    st.metric("Dự báo chi phí tháng tới", f"{forecast_val:,.0f} đ")
+                    
             st.divider()
-            q = st.text_input("💬 Hỏi AI (Ví dụ: 'Máy nào hỏng ở Miền Bắc?')")
-            if q:
-                branch_key = "Miền Bắc" if "bắc" in q.lower() else "Miền Nam" if "nam" in q.lower() else None
-                if branch_key:
-                    res_q = df_db[df_db['branch'] == branch_key]['machine_id'].value_counts()
-                    st.info(f"🤖 Vùng {branch_key}: Máy {res_q.index[0]} hỏng nhiều nhất ({res_q.values[0]} lần).")
+            q = st.text_input("💬 Hỏi nhanh dữ liệu (Ví dụ: 'Máy nào hỏng nhất?')")
+            if q and not df_db.empty:
+                top_m = df_db[m_col_ai].value_counts().index[0]
+                st.info(f"🤖 Theo dữ liệu: Máy **{top_m}** đang có tần suất sửa chữa cao nhất.")
 
 if __name__ == "__main__":
     main()
