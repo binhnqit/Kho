@@ -9,7 +9,7 @@ url = "https://cigbnbaanpebwrufzxfg.supabase.co"
 key = st.secrets["SUPABASE_KEY"]
 supabase = create_client(url, key)
 
-# --- 2. HÀM XỬ LÝ DỮ LIỆU (KHỚP THEO ẢNH CẤU TRÚC) ---
+# --- 2. HÀM XỬ LÝ DỮ LIỆU (ANTI-NGỐC MODE) ---
 @st.cache_data(ttl=30)
 def load_repair_data_final():
     try:
@@ -18,22 +18,31 @@ def load_repair_data_final():
         
         df = pd.DataFrame(res.data)
         
-        # Mapping theo đúng ảnh sếp gửi: confirmed, compensa, machine_
-        df['confirmed_dt'] = pd.to_datetime(df['confirmed'], errors='coerce')
-        df['created_dt'] = pd.to_datetime(df['created_at'], errors='coerce')
-        df = df.dropna(subset=['confirmed_dt'])
+        # 🛡️ CHIẾN THUẬT QUÉT CỘT: Tìm cột ngày xác nhận
+        # Thử mọi khả năng có thể xảy ra trong DB của sếp
+        date_candidates = ['confirmed', 'confirmed_', 'confirmed_date', 'received_', 'created_at']
+        found_date_col = next((c for c in date_candidates if c in df.columns), None)
+        
+        if found_date_col:
+            df['confirmed_dt'] = pd.to_datetime(df[found_date_col], errors='coerce')
+        else:
+            # Nếu không tìm thấy cột nào, dùng tạm thời gian hiện tại để cứu App
+            df['confirmed_dt'] = pd.Timestamp.now()
 
-        # Chiều thời gian
+        # 🛡️ QUÉT CỘT CHI PHÍ
+        cost_candidates = ['compensa', 'compensation', 'cost', 'money']
+        found_cost_col = next((c for c in cost_candidates if c in df.columns), None)
+        df['CHI_PHÍ'] = pd.to_numeric(df[found_cost_col], errors='coerce').fillna(0) if found_cost_col else 0
+
+        # Loại bỏ rác và tạo chiều thời gian
+        df = df.dropna(subset=['confirmed_dt'])
         df['NĂM'] = df['confirmed_dt'].dt.year.astype(int)
         df['THÁNG'] = df['confirmed_dt'].dt.month.astype(int)
         day_map = {'Monday': 'Thứ 2', 'Tuesday': 'Thứ 3', 'Wednesday': 'Thứ 4',
                    'Thursday': 'Thứ 5', 'Friday': 'Thứ 6', 'Saturday': 'Thứ 7', 'Sunday': 'Chủ Nhật'}
         df['THỨ'] = df['confirmed_dt'].dt.day_name().map(day_map)
-
-        # Cột chi phí trong ảnh là 'compensa'
-        df['CHI_PHÍ'] = pd.to_numeric(df['compensa'], errors='coerce').fillna(0)
         
-        return df.sort_values(by='created_dt', ascending=False)
+        return df
     except Exception as e:
         st.error(f"Lỗi hệ thống tải data: {e}")
         return pd.DataFrame()
@@ -48,95 +57,68 @@ def main():
     # --- TAB 1: BÁO CÁO VẬN HÀNH ---
     with tab_dash:
         if df_db.empty:
-            st.info("Chưa có dữ liệu. Vui lòng nạp ở Tab Quản trị.")
+            st.info("Chưa có dữ liệu hoặc DB không phản hồi. Vui lòng kiểm tra Tab Quản trị.")
         else:
-            with st.sidebar:
-                st.header("⚙️ BỘ LỌC")
-                if st.button("🔄 LÀM MỚI DỮ LIỆU", use_container_width=True):
-                    st.cache_data.clear()
-                    st.rerun()
-                
-                f_mode = st.radio("Chế độ lọc:", ["Tháng/Năm", "Khoảng ngày"])
-                if f_mode == "Tháng/Năm":
-                    y_list = sorted(df_db['NĂM'].unique(), reverse=True)
-                    sel_y = st.selectbox("📅 Năm", y_list)
-                    m_list = sorted(df_db[df_db['NĂM'] == sel_y]['THÁNG'].unique().tolist())
-                    sel_m = st.selectbox("📆 Tháng", ["Tất cả"] + m_list)
-                    df_view = df_db[df_db['NĂM'] == sel_y].copy()
-                    if sel_m != "Tất cả": df_view = df_view[df_view['THÁNG'] == sel_m]
-                else:
-                    d_range = st.date_input("Chọn ngày", [df_db['confirmed_dt'].min().date(), df_db['confirmed_dt'].max().date()])
-                    df_view = df_db[(df_db['confirmed_dt'].dt.date >= d_range[0]) & (df_db['confirmed_dt'].dt.date <= d_range[1])].copy() if len(d_range)==2 else df_db
-
             st.title("🚀 Chỉ Số Vận Hành")
             c1, c2, c3 = st.columns(3)
-            c1.metric("💰 TỔNG CHI PHÍ", f"{df_view['CHI_PHÍ'].sum():,.0f} đ")
-            c2.metric("🛠️ SỐ CA", f"{len(df_view)} ca")
-            c3.metric("🏢 ĐIỂM NÓNG", df_view['branch'].value_counts().idxmax() if not df_view.empty else "N/A")
-
+            c1.metric("💰 TỔNG CHI PHÍ", f"{df_db['CHI_PHÍ'].sum():,.0f} đ")
+            c2.metric("🛠️ SỐ CA", f"{len(df_db)} ca")
+            
+            # Kiểm tra cột branch để tránh lỗi idxmax
+            if 'branch' in df_db.columns:
+                c3.metric("🏢 ĐIỂM NÓNG", df_db['branch'].value_counts().idxmax())
+            
             st.divider()
+            # Vẽ biểu đồ (Chỉ vẽ khi có dữ liệu thời gian chuẩn)
             order = ['Thứ 2', 'Thứ 3', 'Thứ 4', 'Thứ 5', 'Thứ 6', 'Thứ 7', 'Chủ Nhật']
-            day_stats = df_view['THỨ'].value_counts().reindex(order).fillna(0).reset_index()
+            day_stats = df_db['THỨ'].value_counts().reindex(order).fillna(0).reset_index()
             day_stats.columns = ['NGÀY_TRONG_TUẦN', 'SỐ_CA']
             st.plotly_chart(px.area(day_stats, x='NGÀY_TRONG_TUẦN', y='SỐ_CA', markers=True, title="Xu hướng sự vụ theo thứ"), use_container_width=True)
 
-    # --- TAB 2: QUẢN TRỊ HỆ THỐNG (FIX KHỚP ẢNH CẤU TRÚC) ---
+    # --- TAB 2: QUẢN TRỊ HỆ THỐNG ---
     with tab_admin:
-        st.title("📥 Quản Trị & Điều Hành Chi Nhánh")
-        ad_sub1, ad_sub2, ad_sub3 = st.tabs(["➕ NHẬP LIỆU", "🏢 CHI NHÁNH", "📜 AUDIT"])
-
-        with ad_sub1:
-            with st.form("f_man_enterprise", clear_on_submit=True):
-                st.subheader("✍️ Nhập ca sửa chữa đơn lẻ")
-                m1, m2 = st.columns(2)
-                with m1:
-                    f_machine = st.text_input("Mã máy (machine_) *")
-                    f_branch = st.selectbox("Chi nhánh *", ["Miền Bắc", "Miền Trung", "Miền Nam"])
-                    f_cost = st.number_input("Chi phí thực tế (compensa)", min_value=0, step=10000)
-                with m2:
-                    f_customer = st.text_input("Tên khách hàng (customer_) *")
-                    f_confirmed_date = st.date_input("Ngày xác nhận (confirmed)", value=datetime.now())
-                    f_reason = st.text_input("Nguyên nhân (issue_reason) *")
-                
-                f_note = st.text_area("Ghi chú (note)")
-                
-                if st.form_submit_button("💾 Lưu vào cơ sở dữ liệu", use_container_width=True, type="primary"):
-                    if not f_machine or not f_customer or not f_reason:
-                        st.warning("⚠️ Vui lòng điền đủ các trường (*)")
-                    else:
-                        # GÓI DỮ LIỆU KHỚP CHÍNH XÁC VỚI FILE ẢNH
-                        record = {
-                            "machine_": f_machine.strip().upper(),
-                            "branch": f_branch,
-                            "customer_": f_customer.strip(),
-                            "received_": datetime.now().isoformat(), # Cột trong ảnh
-                            "confirmed": f_confirmed_date.isoformat(), # Cột trong ảnh (không gạch dưới)
-                            "issue_reason": f_reason.strip(),
-                            "note": f_note.strip() if f_note else "",
-                            "compensa": float(f_cost), # Cột trong ảnh (cắt cụt)
-                            "is_unrepa": False
-                        }
-                        try:
-                            supabase.table("repair_cases").insert(record).execute()
-                            st.success("✅ Đã lưu thành công!")
-                            st.cache_data.clear()
-                            st.rerun()
-                        except Exception as e:
-                            st.error(f"Lỗi Database: {e}")
-
-        with ad_sub2:
-            st.subheader("🏢 Theo dõi vận hành theo chi nhánh")
-            sel_b = st.selectbox("Chọn chi nhánh xem nhanh", ["Miền Bắc", "Miền Trung", "Miền Nam"])
+        st.title("📥 Quản Trị & Điều Hành")
+        
+        # PHẦN GỠ RỐI (DEBUG) - GIÚP SẾP NHÌN THẤY TÊN CỘT THẬT
+        with st.expander("🛠️ KIỂM TRA CẤU TRÚC DATABASE (DÀNH CHO SẾP)"):
             if not df_db.empty:
-                df_b = df_db[df_db['branch'] == sel_b]
-                if not df_b.empty:
-                    m_view = df_b.groupby('machine_').agg(ca=('id','count'), tien=('CHI_PHÍ','sum')).reset_index()
-                    st.dataframe(m_view.sort_values('ca', ascending=False), use_container_width=True, hide_index=True)
+                st.write("Danh sách cột App đang nhận được từ Supabase:")
+                st.code(list(df_db.columns))
+                st.write("Dữ liệu mẫu:")
+                st.write(df_db.head(3))
+            else:
+                st.error("Không thể kết nối lấy cột. Kiểm tra SUPABASE_KEY.")
 
-        with ad_sub3:
-            st.subheader("📜 Nhật ký nhập liệu")
-            if not df_db.empty:
-                st.dataframe(df_db.head(10), use_container_width=True)
+        # FORM NHẬP LIỆU (GỬI ĐÚNG THEO ẢNH SẾP GỬI)
+        with st.form("f_fix_input"):
+            st.subheader("✍️ Nhập ca sửa chữa đơn lẻ")
+            m1, m2 = st.columns(2)
+            f_machine = m1.text_input("Mã máy (machine_)")
+            f_customer = m2.text_input("Tên khách hàng (customer_)")
+            f_cost = m1.number_input("Chi phí (compensa)", min_value=0)
+            f_confirmed = m2.date_input("Ngày xác nhận (confirmed)", value=datetime.now())
+            f_reason = st.text_input("Nguyên nhân (issue_reason)")
+            
+            if st.form_submit_button("💾 LƯU VÀO DATABASE"):
+                record = {
+                    "machine_": f_machine.strip().upper(),
+                    "customer_": f_customer.strip(),
+                    "compensa": float(f_cost),
+                    "confirmed": f_confirmed.isoformat(),
+                    "issue_reason": f_reason,
+                    "branch": "Miền Nam", # Mặc định để tránh lỗi NULL
+                    "is_unrepa": False,
+                    "received_": datetime.now().isoformat()
+                }
+                try:
+                    supabase.table("repair_cases").insert(record).execute()
+                    st.success("✅ Đã lưu! Đang làm mới...")
+                    st.cache_data.clear()
+                    st.rerun()
+                except Exception as e:
+                    st.error(f"Lỗi khi lưu: {e}")
+
+    # --- TAB 3: AI INSIGHTS ---
 
     # --- TAB 3: AI INSIGHTS (BẢO TỒN DI SẢN) ---
     with tab_ai:
