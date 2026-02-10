@@ -39,27 +39,24 @@ def load_repair_data_final():
         return pd.DataFrame()
 def write_audit_log(action, table_name, record_id=None, old_data=None, new_data=None):
     """
-    Ghi nhật ký hệ thống. 
-    user_ctx lấy từ session_state (giả định bạn đã lưu khi login)
+    Ghi nhật ký vào bảng audit_logs dựa trên cấu trúc Enterprise.
+    Đảm bảo bảng audit_logs của bạn có các cột: user_role, action, table_name, record_id, old_data, new_data
     """
     try:
-        # Lấy thông tin người dùng từ session_state
-        user_id = st.session_state.get('user_id', '00000000-0000-0000-0000-000000000000')
-        user_role = st.session_state.get('user_role', 'guest')
-
-        audit = {
-            "user_id": user_id,
+        user_role = st.session_state.get('user_role', 'admin@system')
+        
+        audit_entry = {
             "user_role": user_role,
             "action": action,
             "table_name": table_name,
             "record_id": str(record_id) if record_id else None,
-            "old_data": old_data, # Supabase nhận dict cho cột jsonb
+            "old_data": old_data,
             "new_data": new_data,
             "created_at": datetime.now().isoformat()
         }
-        supabase.table("audit_logs").insert(audit).execute()
+        supabase.table("audit_logs").insert(audit_entry).execute()
     except Exception as e:
-        st.error(f"Lỗi ghi Audit Log: {e}")
+        st.warning(f"⚠️ Không thể ghi nhật ký Audit: {e}")
 # --- 3. GIAO DIỆN CHÍNH ---
 def main():
     st.set_page_config(page_title="4ORANGES OPS 2026", layout="wide", page_icon="🎨")
@@ -213,136 +210,124 @@ def main():
         # SUB-TAB 1: NHẬP LIỆU
         # ---------------------------------------------------------
         with ad_sub1:
-            c_up, c_man = st.columns([5, 5])
+    c_up, c_man = st.columns([5, 5])
 
-            # ---------- PHẦN A: CSV IMPORT ----------
-            with c_up:
-                st.subheader("📂 Import CSV (Enterprise)")
+    # ======================================================
+    # PHẦN A: IMPORT CSV
+    # ======================================================
+    with c_up:
+        st.subheader("📂 Import CSV (Enterprise)")
+        
+        # Danh sách cột khớp với DB thực tế của bạn
+        expected_cols = {
+            "machine_id", "branch", "customer_name", 
+            "confirmed_date", "issue_reason", "compensation"
+        }
 
-                expected_cols = {
-                    "machine_id", "branch", "customer_name", 
-                    "confirmed_date", "issue_reason", "compensation"
-                }
+        up_file = st.file_uploader("Chọn file CSV", type="csv", key="csv_admin_enterprise")
 
-                up_file = st.file_uploader(
-                    "Chọn file CSV", 
-                    type="csv", 
-                    key="csv_admin_enterprise"
-                )
+        if up_file:
+            try:
+                df_up = pd.read_csv(up_file)
+                missing_cols = expected_cols - set(df_up.columns)
 
-                if up_file:
-                    try:
-                        df_up = pd.read_csv(up_file)
-                        st.markdown("### 🔍 Kiểm tra cấu trúc dữ liệu")
+                if missing_cols:
+                    st.error(f"❌ File thiếu cột: {', '.join(missing_cols)}")
+                else:
+                    st.success("✅ Cấu trúc file hợp lệ")
+                    st.dataframe(df_up.head(3), use_container_width=True)
 
-                        missing_cols = expected_cols - set(df_up.columns)
-                        extra_cols = set(df_up.columns) - expected_cols
-
-                        if missing_cols:
-                            st.error(f"❌ Thiếu cột bắt buộc: {', '.join(missing_cols)}")
-                        else:
-                            st.success("✅ Cấu trúc hợp lệ")
-                            if extra_cols:
-                                st.warning(f"⚠️ Cột dư sẽ bỏ qua: {', '.join(extra_cols)}")
-
-                            st.markdown("### 👀 Xem trước dữ liệu (5 dòng)")
-                            st.dataframe(df_up.head(5), use_container_width=True)
-
-                            if st.button(f"🚀 Xác nhận import {len(df_up)} dòng", use_container_width=True, type="primary"):
-                                records = []
-                                audits = []
-                                
-                                for _, r in df_up.iterrows():
-                                    # Chuẩn bị dữ liệu để insert vào repair_cases
-                                    record = {
-                                        "machine_id": str(r["machine_id"]).strip().upper(),
-                                        "branch": r["branch"],
-                                        "customer_name": r["customer_name"],
-                                        "confirmed_date": pd.to_datetime(r["confirmed_date"]).isoformat(),
-                                        "issue_reason": r["issue_reason"],
-                                        "compensation": float(r["compensation"]),
-                                        "received_date": datetime.now().isoformat(),
-                                        "note": "",
-                                        "is_unrepairable": False,
-                                        "source": "csv",
-                                        "created_by": "admin@system"
-                                    }
-                                    records.append(record)
-
-                                    # Chuẩn bị dữ liệu log cho audit_logs
-                                    audits.append({
-                                        "action": "IMPORT_CSV",
-                                        "table_name": "repair_cases",
-                                        "actor": "admin@system",
-                                        "source": "csv",
-                                        "payload": str(record), # Convert dict sang string để lưu
-                                        "created_at": datetime.now().isoformat()
-                                    })
-
-                                try:
-                                    supabase.table("repair_cases").insert(records).execute()
-                                    supabase.table("audit_logs").insert(audits).execute()
-                                    st.success("✅ Import & Audit thành công")
-                                    st.cache_data.clear()
-                                    st.rerun()
-                                except Exception as e:
-                                    st.error(f"❌ Lỗi import: {e}")
-
-                    except Exception as e:
-                        st.error(f"❌ Không đọc được CSV: {e}")
-
-            # ---------- PHẦN B: MANUAL ENTRY ----------
-            with c_man:
-                st.subheader("✍️ Nhập ca sửa chữa đơn lẻ")
-
-                with st.form("f_manual_enterprise", clear_on_submit=True):
-                    m1, m2 = st.columns(2)
-                    with m1:
-                        f_machine = st.text_input("Mã máy *")
-                        f_branch = st.selectbox("Chi nhánh *", ["Miền Bắc", "Miền Trung", "Miền Nam"])
-                        f_cost = st.number_input("Chi phí", min_value=0, step=10000)
-                    with m2:
-                        f_customer = st.text_input("Khách hàng *")
-                        f_confirmed = st.date_input("Ngày xác nhận", value=datetime.now())
-                        f_reason = st.text_input("Nguyên nhân *")
-
-                    f_note = st.text_area("Ghi chú")
-
-                    if st.form_submit_button("💾 Lưu dữ liệu", use_container_width=True):
-                        if not f_machine or not f_customer or not f_reason:
-                            st.warning("⚠️ Vui lòng nhập đầy đủ các trường bắt buộc")
-                        else:
+                    if st.button(f"🚀 Xác nhận Import {len(df_up)} dòng", use_container_width=True, type="primary"):
+                        success_count = 0
+                        for _, r in df_up.iterrows():
+                            # Chuẩn bị bản ghi khớp 100% cột trong Database
                             record = {
-                                "machine_id": f_machine.strip().upper(),
-                                "branch": f_branch,
-                                "customer_name": f_customer.strip(),
-                                "confirmed_date": f_confirmed.isoformat(),
-                                "received_date": datetime.now().isoformat(),
-                                "issue_reason": f_reason.strip(),
-                                "note": f_note.strip(),
-                                "compensation": float(f_cost),
+                                "machine_id": str(r["machine_id"]).strip(),
+                                "branch": str(r["branch"]),
+                                "customer_name": str(r["customer_name"]),
+                                "received_date": datetime.now().date().isoformat(),
+                                "issue_reason": str(r["issue_reason"]),
+                                "confirmed_date": pd.to_datetime(r["confirmed_date"]).date().isoformat(),
+                                "note": "Import từ CSV",
                                 "is_unrepairable": False,
-                                "source": "manual",
-                                "created_by": "admin@system"
+                                "compensation": float(r["compensation"])
                             }
                             
-                            audit = {
-                                "action": "INSERT",
-                                "table_name": "repair_cases",
-                                "actor": "admin@system",
-                                "source": "manual",
-                                "payload": str(record),
-                                "created_at": datetime.now().isoformat()
-                            }
-
                             try:
-                                supabase.table("repair_cases").insert(record).execute()
-                                supabase.table("audit_logs").insert(audit).execute()
-                                st.success("✅ Lưu & audit thành công")
-                                st.cache_data.clear()
-                                st.rerun()
+                                res = supabase.table("repair_cases").insert(record).execute()
+                                if res.data:
+                                    write_audit_log(
+                                        action="IMPORT_CSV",
+                                        table_name="repair_cases",
+                                        record_id=res.data[0]['id'],
+                                        new_data=record
+                                    )
+                                    success_count += 1
                             except Exception as e:
-                                st.error(f"❌ Lỗi DB: {e}")
+                                st.error(f"❌ Lỗi tại dòng {success_count + 1}: {e}")
+                                break
+                        
+                        if success_count == len(df_up):
+                            st.success(f"✅ Đã Import thành công {success_count} dòng!")
+                            st.cache_data.clear()
+                            st.rerun()
+
+            except Exception as e:
+                st.error(f"❌ Lỗi đọc file: {e}")
+
+    # ======================================================
+    # PHẦN B: NHẬP THỦ CÔNG (MANUAL)
+    # ======================================================
+    with c_man:
+        st.subheader("✍️ Nhập ca sửa chữa đơn lẻ")
+
+        with st.form("f_manual_enterprise", clear_on_submit=True):
+            m1, m2 = st.columns(2)
+            with m1:
+                f_machine = st.text_input("Mã máy *")
+                f_branch = st.selectbox("Chi nhánh *", ["Miền Bắc", "Miền Trung", "Miền Nam"])
+                f_cost = st.number_input("Chi phí (compensation)", min_value=0, step=10000)
+            with m2:
+                f_customer = st.text_input("Khách hàng *")
+                f_confirmed = st.date_input("Ngày xác nhận", value=datetime.now())
+                f_reason = st.text_input("Nguyên nhân *")
+
+            f_note = st.text_area("Ghi chú (note)")
+
+            if st.form_submit_button("💾 Lưu dữ liệu hệ thống", use_container_width=True):
+                if not f_machine or not f_customer or not f_reason:
+                    st.warning("⚠️ Vui lòng điền đầy đủ thông tin bắt buộc (*)")
+                else:
+                    # 1. Chuẩn bị bản ghi chuẩn Database (lược bỏ cột thừa)
+                    record = {
+                        "machine_id": f_machine.strip().upper(),
+                        "branch": f_branch,
+                        "customer_name": f_customer.strip(),
+                        "received_date": datetime.now().date().isoformat(),
+                        "issue_reason": f_reason.strip(),
+                        "confirmed_date": f_confirmed.isoformat(),
+                        "note": f_note.strip() if f_note else "",
+                        "is_unrepairable": False,
+                        "compensation": float(f_cost)
+                    }
+
+                    try:
+                        # 2. Thực thi Insert vào bảng repair_cases
+                        res = supabase.table("repair_cases").insert(record).execute()
+                        
+                        if res.data:
+                            # 3. Ghi Audit Log thành công
+                            write_audit_log(
+                                action="INSERT_MANUAL",
+                                table_name="repair_cases",
+                                record_id=res.data[0]['id'],
+                                new_data=record
+                            )
+                            st.success("✅ Đã lưu dữ liệu và ghi nhật ký hệ thống!")
+                            st.cache_data.clear()
+                            st.rerun()
+                    except Exception as e:
+                        st.error(f"❌ Lỗi Database: {e}. Vui lòng kiểm tra mã máy (UUID) hoặc kiểu dữ liệu.")
 
         # ---------------------------------------------------------
         # SUB-TAB 2: CHI NHÁNH
