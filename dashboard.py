@@ -340,15 +340,42 @@ def main():
         # SUB-TAB 3: AUDIT LOG
         # ---------------------------------------------------------
         with ad_sub3:
-            st.subheader("📜 Nhật ký audit gần đây")
+            st.subheader("📜 Nhật ký Audit hệ thống")
+            
+            # Nút làm mới tay để tránh việc cache làm mất log mới
+            if st.button("🔄 Làm mới Nhật ký"):
+                st.rerun()
+
             try:
-                res_audit = supabase.table("audit_logs").select("*").order("created_at", desc=True).limit(50).execute()
+                # Thực hiện truy vấn trực tiếp vào bảng audit_logs
+                res_audit = supabase.table("audit_logs").select("*").order("created_at", desc=True).limit(100).execute()
+                
                 if res_audit.data:
-                    st.dataframe(pd.DataFrame(res_audit.data), use_container_width=True)
+                    df_audit = pd.DataFrame(res_audit.data)
+                    
+                    # Định dạng lại cột thời gian cho dễ nhìn
+                    if 'created_at' in df_audit.columns:
+                        df_audit['created_at'] = pd.to_datetime(df_audit['created_at']).dt.strftime('%Y-%m-%d %H:%M:%S')
+                    
+                    # Hiển thị bảng log
+                    st.dataframe(
+                        df_audit, 
+                        use_container_width=True,
+                        column_config={
+                            "payload": st.column_config.TextColumn("Dữ liệu chi tiết", width="medium"),
+                            "action": st.column_config.TextColumn("Hành động"),
+                            "created_at": st.column_config.TextColumn("Thời gian")
+                        }
+                    )
                 else:
-                    st.info("Chưa có audit log")
+                    st.info("ℹ️ Hiện tại chưa có bản ghi nhật ký nào trong bảng 'audit_logs'.")
+                    st.caption("Gợi ý: Hãy thử thực hiện một lệnh Nhập liệu để tạo log.")
+                    
             except Exception as e:
-                st.error(f"❌ Không tải được audit log: {e}")
+                st.error("❌ Không thể kết nối với bảng 'audit_logs'")
+                with st.expander("Chi tiết lỗi kỹ thuật"):
+                    st.code(e)
+                st.warning("Mẹo: Đảm bảo bạn đã tạo bảng 'audit_logs' trong Supabase SQL Editor với các cột: id, action, table_name, actor, payload, created_at.")
 
     # --- TAB 3: AI INSIGHTS ---
     with tab_ai:
