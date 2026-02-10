@@ -64,9 +64,6 @@ def login_form():
             else:
                 st.error("Tài khoản không tồn tại!")
 
-url = "https://cigbnbaanpebwrufzxfg.supabase.co"
-key = st.secrets["SUPABASE_KEY"]
-supabase = create_client(url, key)
 @st.cache_data(ttl=30)
 def load_repair_data_final():
     try:
@@ -94,6 +91,7 @@ def load_repair_data_final():
     except Exception as e:
         st.error(f"Lỗi hệ thống tải data: {e}")
         return pd.DataFrame()
+
 # 5. HÀM MAIN ĐIỀU HƯỚNG
 def main():
     if "is_logged_in" not in st.session_state:
@@ -120,8 +118,10 @@ def main():
             st.session_state["is_logged_in"] = False
             st.rerun()
     #st.set_page_config(page_title="4ORANGES OPS 2026", layout="wide", page_icon="🎨")
+    url = "https://cigbnbaanpebwrufzxfg.supabase.co"
+    key = st.secrets["SUPABASE_KEY"]
+    supabase = create_client(url, key)
     df_db = load_repair_data_final()
-
     tab_dash, tab_admin, tab_ai, tab_alert, tab_kpi = st.tabs([
         "📊 BÁO CÁO VẬN HÀNH", 
         "📥 QUẢN TRỊ HỆ THỐNG", 
