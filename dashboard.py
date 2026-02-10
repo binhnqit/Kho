@@ -118,7 +118,7 @@ def main():
         if st.sidebar.button("Đăng xuất"):
             st.session_state["is_logged_in"] = False
             st.rerun()
-    st.set_page_config(page_title="4ORANGES OPS 2026", layout="wide", page_icon="🎨")
+    #st.set_page_config(page_title="4ORANGES OPS 2026", layout="wide", page_icon="🎨")
     df_db = load_repair_data_final()
 
     tab_dash, tab_admin, tab_ai, tab_alert, tab_kpi = st.tabs([
