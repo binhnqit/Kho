@@ -5,12 +5,13 @@ import plotly.express as px
 from supabase import create_client
 from datetime import datetime
 
-# 1. CẤU HÌNH TRANG (Bắt buộc đặt ở đầu file)
+# 1. CẤU HÌNH TRANG (Bắt buộc đặt ở đầu file và duy nhất)
 st.set_page_config(page_title="4ORANGES OPS 2026", layout="wide", page_icon="🎨")
 
-url = "https://cigbnbaanpebwrufzxfg.supabase.co"
-key = st.secrets["SUPABASE_KEY"]
-supabase = create_client(url, key)
+# Kết nối Supabase
+URL = "https://cigbnbaanpebwrufzxfg.supabase.co"
+KEY = st.secrets["SUPABASE_KEY"]
+supabase = create_client(URL, KEY)
 
 # 2. HÀM BẢO MẬT
 def hash_password(password):
@@ -20,11 +21,11 @@ def hash_password(password):
 def registration_form():
     st.markdown("### 📝 Đăng ký tài khoản")
     with st.form("reg_form", clear_on_submit=True):
-        new_user = st.text_input("Tên đăng nhập")
-        new_name = st.text_input("Họ và tên")
-        new_pass = st.text_input("Mật khẩu", type="password")
-        confirm_pass = st.text_input("Xác nhận mật khẩu", type="password")
-        role = st.selectbox("Vai trò", ["User", "Admin"]) # Tùy chọn phân quyền
+        new_user = st.text_input("Tên đăng nhập", key="reg_user")
+        new_name = st.text_input("Họ và tên", key="reg_name")
+        new_pass = st.text_input("Mật khẩu", type="password", key="reg_pass")
+        confirm_pass = st.text_input("Xác nhận mật khẩu", type="password", key="reg_confirm")
+        role = st.selectbox("Vai trò", ["User", "Admin"], key="reg_role")
         submit_btn = st.form_submit_button("Tạo tài khoản", use_container_width=True)
 
         if submit_btn:
@@ -33,7 +34,6 @@ def registration_form():
             elif new_pass != confirm_pass:
                 st.error("Mật khẩu không khớp!")
             else:
-                # Kiểm tra trùng username
                 exists = supabase.table("users").select("*").eq("username", new_user).execute()
                 if exists.data:
                     st.error("Tên đăng nhập đã tồn tại!")
@@ -52,8 +52,8 @@ def registration_form():
 def login_form():
     st.markdown("### 🔐 Đăng nhập hệ thống")
     with st.form("login_form"):
-        user = st.text_input("Tên đăng nhập")
-        pw = st.text_input("Mật khẩu", type="password")
+        user = st.text_input("Tên đăng nhập", key="login_user")
+        pw = st.text_input("Mật khẩu", type="password", key="login_pw")
         submit_btn = st.form_submit_button("Đăng nhập", type="primary", use_container_width=True)
 
         if submit_btn:
@@ -68,61 +68,75 @@ def login_form():
             else:
                 st.error("Tài khoản không tồn tại!")
 
+# 5. TẢI DỮ LIỆU (Đã fix mất dòng và lấy machine_code)
 @st.cache_data(ttl=30)
 def load_repair_data_final():
     try:
-        res = supabase.table("repair_cases").select("*").order("created_at", desc=True).execute()
-        if not res.data: return pd.DataFrame()
+        # Lấy dữ liệu 2 bảng
+        res_repair = supabase.table("repair_cases").select("*").order("created_at", desc=True).execute()
+        res_machines = supabase.table("machines").select("id, machine_code").execute()
         
-        df = pd.DataFrame(res.data)
+        if not res_repair.data: return pd.DataFrame()
         
-        # --- ĐỒNG BỘ CỘT NGÀY THEO SCHEMA ---
-        df['confirmed_dt'] = pd.to_datetime(df['confirmed_date'], errors='coerce')
+        df_repair = pd.DataFrame(res_repair.data)
+        df_m = pd.DataFrame(res_machines.data)
+
+        # Merge lấy machine_code
+        if not df_m.empty and 'machine_id' in df_repair.columns:
+            df_repair['machine_id'] = df_repair['machine_id'].astype(str)
+            df_m['id'] = df_m['id'].astype(str)
+            df = pd.merge(df_repair, df_m[['id', 'machine_code']], left_on='machine_id', right_on='id', how='left')
+            df['machine_id'] = df['machine_code'].fillna(df['machine_id'])
+            if 'id_x' in df.columns: df['id'] = df['id_x'] # Bảo vệ cột id gốc
+        else:
+            df = df_repair
+
+        # Xử lý ngày tháng linh hoạt (Cứu dòng trống confirmed_date)
         df['created_dt'] = pd.to_datetime(df['created_at'], errors='coerce')
+        df['confirmed_dt_raw'] = pd.to_datetime(df['confirmed_date'], errors='coerce')
+        df['confirmed_dt'] = df['confirmed_dt_raw'].fillna(df['created_dt'])
         
         df = df.dropna(subset=['confirmed_dt'])
 
         df['NĂM'] = df['confirmed_dt'].dt.year.astype(int)
         df['THÁNG'] = df['confirmed_dt'].dt.month.astype(int)
+        
         day_map = {'Monday': 'Thứ 2', 'Tuesday': 'Thứ 3', 'Wednesday': 'Thứ 4',
                    'Thursday': 'Thứ 5', 'Friday': 'Thứ 6', 'Saturday': 'Thứ 7', 'Sunday': 'Chủ Nhật'}
         df['THỨ'] = df['confirmed_dt'].dt.day_name().map(day_map)
 
-        # --- ĐỒNG BỘ CỘT CHI PHÍ THEO SCHEMA ---
+        # Ép kiểu chi phí an toàn
         df['CHI_PHÍ'] = pd.to_numeric(df['compensation'], errors='coerce').fillna(0)
         
-        return df.sort_values(by='created_dt', ascending=False)
+        return df.sort_values(by='confirmed_dt', ascending=False)
     except Exception as e:
         st.error(f"Lỗi hệ thống tải data: {e}")
         return pd.DataFrame()
 
-# 5. HÀM MAIN ĐIỀU HƯỚNG
+# 6. ĐIỀU HƯỚNG CHÍNH
 def main():
     if "is_logged_in" not in st.session_state:
         st.session_state["is_logged_in"] = False
 
     if not st.session_state["is_logged_in"]:
-        # Giao diện khi chưa đăng nhập
         col1, col2, col3 = st.columns([1, 2, 1])
         with col2:
-            mode = st.radio("Lựa chọn", ["Đăng nhập", "Đăng ký"], horizontal=True)
+            mode = st.radio("Lựa chọn", ["Đăng nhập", "Đăng ký"], horizontal=True, key="auth_mode")
             if mode == "Đăng nhập":
                 login_form()
             else:
                 registration_form()
     else:
-        # GIAO DIỆN SAU KHI ĐĂNG NHẬP
+        # Sidebar UI
         with st.sidebar:
             st.success(f"👤 {st.session_state['user_info']['full_name']}")
-            if st.button("Đăng xuất"):
+            st.info(f"🔑 Vai trò: {st.session_state['user_info'].get('role', 'User')}")
+            if st.button("Đăng xuất", key="logout_btn", type="primary", use_container_width=True):
                 st.session_state["is_logged_in"] = False
                 st.rerun()
-        st.sidebar.success(f"🔓 Đang đăng nhập: {st.session_state['user_info']['full_name']}")
-        if st.sidebar.button("Đăng xuất"):
-            st.session_state["is_logged_in"] = False
-            st.rerun()
-    #st.set_page_config(page_title="4ORANGES OPS 2026", layout="wide", page_icon="🎨")   
-    df_db = load_repair_data_final()
+
+        # Tải dữ liệu cho Dashboard
+        df_db = load_repair_data_final()
     tab_dash, tab_admin, tab_ai, tab_alert, tab_kpi = st.tabs([
         "📊 BÁO CÁO VẬN HÀNH", 
         "📥 QUẢN TRỊ HỆ THỐNG", 
