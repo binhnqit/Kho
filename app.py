@@ -1,6 +1,7 @@
 import streamlit as st
 from services.repair_service import get_repair_data
 from tabs.dashboard import render_dashboard  # <--- THÊM DÒNG NÀY
+from tabs.admin import render_admin_panel
 
 # 1. Cấu hình trang (Luôn để ở dòng đầu tiên)
 st.set_page_config(
@@ -46,7 +47,7 @@ def main():
             st.warning("Chưa có dữ liệu hoặc lỗi kết nối.")
 
     with tab_admin:
-        st.write("Nội dung Tab Quản trị sẽ được triển khai tiếp theo.")
+    render_admin_panel()
 
     with tab_alert:
         st.write("Nội dung Tab Cảnh báo sẽ được triển khai tiếp theo.")
