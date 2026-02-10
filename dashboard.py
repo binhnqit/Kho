@@ -11,9 +11,7 @@ st.set_page_config(page_title="4ORANGES OPS 2026", layout="wide", page_icon="�
 # 2. HÀM BẢO MẬT
 def hash_password(password):
     return hashlib.sha256(str.encode(password)).hexdigest()
-url = "https://cigbnbaanpebwrufzxfg.supabase.co"
-key = st.secrets["SUPABASE_KEY"]
-supabase = create_client(url, key)
+
 # 3. FORM ĐĂNG KÝ
 def registration_form():
     st.markdown("### 📝 Đăng ký tài khoản")
@@ -66,6 +64,9 @@ def login_form():
             else:
                 st.error("Tài khoản không tồn tại!")
 
+url = "https://cigbnbaanpebwrufzxfg.supabase.co"
+key = st.secrets["SUPABASE_KEY"]
+supabase = create_client(url, key)
 @st.cache_data(ttl=30)
 def load_repair_data_final():
     try:
