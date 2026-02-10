@@ -276,6 +276,7 @@ def main():
 
     # --- TAB 2: QUẢN TRỊ HỆ THỐNG ---
     with tab_admin:
+    # Tất cả code bên trong tab_admin phải lùi vào 4 dấu cách
     st.title("📥 Quản Trị & Điều Hành Chi Nhánh")
 
     # Khởi tạo các Sub-tabs
@@ -289,13 +290,14 @@ def main():
     # SUB-TAB 1: NHẬP LIỆU
     # ---------------------------------------------------------
     with ad_sub1:
+        # Tất cả code bên trong ad_sub1 phải lùi thêm 4 dấu cách nữa
         c_up, c_man = st.columns([5, 5])
 
         # ---------- PHẦN A: CSV IMPORT ----------
         with c_up:
             st.subheader("📂 Import CSV (Enterprise)")
-
-            # Cột mong đợi từ file CSV của người dùng
+            
+            # Cấu trúc file CSV mong đợi
             expected_cols = {
                 "machine_code", "branch", "customer_name", 
                 "confirmed_date", "issue_reason", "compensation"
@@ -320,8 +322,8 @@ def main():
                         st.dataframe(df_up.head(5), use_container_width=True)
 
                         if st.button(f"🚀 Xác nhận import {len(df_up)} dòng", use_container_width=True, type="primary"):
+                            # Logic xử lý import (đã lùi dòng đúng chuẩn)
                             try:
-                                # 1. Lấy danh sách máy để mapping Code -> UUID
                                 res_m = supabase.table("machines").select("id, machine_code").execute()
                                 machine_map = {m['machine_code']: m['id'] for m in res_m.data}
 
@@ -347,16 +349,15 @@ def main():
 
                                 if records:
                                     supabase.table("repair_cases").insert(records).execute()
-                                    st.success(f"✅ Đã import thành công {success_count} dòng!")
+                                    st.success(f"✅ Đã nạp thành công {success_count} dòng!")
                                     st.cache_data.clear()
                                     st.rerun()
                                 else:
-                                    st.error("❌ Không có mã máy nào khớp với hệ thống.")
+                                    st.error("❌ Không tìm thấy mã máy khớp.")
                             except Exception as e:
-                                st.error(f"❌ Lỗi xử lý: {e}")
-
+                                st.error(f"❌ Lỗi: {e}")
                 except Exception as e:
-                    st.error(f"❌ Không đọc được file: {e}")
+                    st.error(f"❌ File lỗi: {e}")
 
         # ---------- PHẦN B: MANUAL ENTRY ----------
         with c_man:
@@ -365,9 +366,9 @@ def main():
             with st.form("f_manual_enterprise", clear_on_submit=True):
                 m1, m2 = st.columns(2)
                 with m1:
-                    f_machine_code = st.text_input("Mã máy * (VD: M001)", key="in_m_code")
+                    f_machine_code = st.text_input("Mã máy *", key="in_m_code")
                     f_branch = st.selectbox("Chi nhánh *", ["Miền Bắc", "Miền Trung", "Miền Nam"], key="in_branch")
-                    f_cost = st.number_input("Chi phí", min_value=0, step=10000, key="in_cost")
+                    f_cost = st.number_input("Chi phí", min_value=0, key="in_cost")
                 with m2:
                     f_customer = st.text_input("Khách hàng *", key="in_cust")
                     f_confirmed = st.date_input("Ngày xác nhận", value=datetime.now(), key="in_date")
@@ -378,14 +379,12 @@ def main():
 
                 if submit:
                     if not f_machine_code or not f_customer or not f_reason:
-                        st.warning("⚠️ Vui lòng điền đủ thông tin có dấu *")
+                        st.warning("⚠️ Điền đầy đủ thông tin dấu *")
                     else:
                         try:
-                            # Tìm UUID của máy
                             res_m = supabase.table("machines").select("id").eq("machine_code", f_machine_code.strip().upper()).execute()
-                            
                             if not res_m.data:
-                                st.error(f"❌ Không tìm thấy mã máy '{f_machine_code}'")
+                                st.error(f"❌ Mã máy {f_machine_code} không tồn tại")
                             else:
                                 real_uuid = res_m.data[0]['id']
                                 record = {
@@ -399,34 +398,15 @@ def main():
                                     "compensation": float(f_cost),
                                     "is_unrepairable": False
                                 }
-                                
                                 supabase.table("repair_cases").insert(record).execute()
-                                
-                                # Audit Log (Nếu có bảng)
-                                try:
-                                    audit = {
-                                        "action": "INSERT_MANUAL",
-                                        "table_name": "repair_cases",
-                                        "actor": st.session_state.get('user_info', {}).get('username', 'admin'),
-                                        "payload": str(record),
-                                        "created_at": datetime.now().isoformat()
-                                    }
-                                    supabase.table("audit_logs").insert(audit).execute()
-                                except:
-                                    pass
-
-                                st.success(f"✅ Đã lưu máy {f_machine_code}")
+                                st.success("✅ Đã lưu!")
                                 st.cache_data.clear()
                                 st.rerun()
                         except Exception as e:
-                            st.error(f"❌ Lỗi DB: {e}")
+                            st.error(f"❌ Lỗi: {e}")
 
-    # ---------------------------------------------------------
-        # ---------------------------------------------------------
-    
-        # ---------------------------------------------------------
-        # SUB-TAB 2: CHI NHÁNH
-        # ---------------------------------------------------------
+    # CÁC TAB CÒN LẠI (Phải nằm ngoài with ad_sub1 nhưng vẫn trong with tab_admin)
+   
         with ad_sub2:
             st.subheader("🏢 Theo dõi vận hành theo chi nhánh")
             sel_b = st.selectbox("Chọn chi nhánh", ["Miền Bắc", "Miền Trung", "Miền Nam"])
