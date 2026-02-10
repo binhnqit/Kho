@@ -79,7 +79,7 @@ def main():
             day_stats.columns = ['NGÀY_TRONG_TUẦN', 'SỐ_CA']
             st.plotly_chart(px.area(day_stats, x='NGÀY_TRONG_TUẦN', y='SỐ_CA', markers=True, title="Xu hướng sự vụ theo thứ"), use_container_width=True)
 
-       # --- TAB 2: QUẢN TRỊ HỆ THỐNG ---
+   # --- TAB 2: QUẢN TRỊ HỆ THỐNG ---
     with tab_admin:
         st.title("📥 Quản Trị & Điều Hành Chi Nhánh")
         ad_sub1, ad_sub2, ad_sub3 = st.tabs(["➕ NHẬP LIỆU", "🏢 CHI NHÁNH", "📜 AUDIT"])
