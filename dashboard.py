@@ -449,7 +449,23 @@ def main():
                             st.error(f"❌ Lỗi hệ thống: {e}")
                             st.info("Kiểm tra xem tên cột trong bảng machines có đúng là 'machine_code' không?")
 
-        # ---------------------------------------------------------
+        with ad_sub2:
+            st.subheader("🏢 Theo dõi vận hành theo chi nhánh")
+            sel_b = st.selectbox("Chọn chi nhánh", ["Miền Bắc", "Miền Trung", "Miền Nam"])
+
+            if not df_db.empty:
+                df_b = df_db[df_db["branch"] == sel_b]
+                if not df_b.empty:
+                    view = (
+                        df_b.groupby("machine_id")
+                        .agg(so_ca=("id", "count"), tong_chi_phi=("compensation", "sum"))
+                        .reset_index()
+                        .sort_values("so_ca", ascending=False)
+                    )
+                    st.dataframe(view, use_container_width=True)
+                else:
+                    st.info("Không có dữ liệu chi nhánh này")
+		# ---------------------------------------------------------
         # SUB-TAB 3: AUDIT LOG
         # ---------------------------------------------------------
         with ad_sub3:
