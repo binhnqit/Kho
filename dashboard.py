@@ -160,35 +160,152 @@ def main():
                 st.dataframe(df_db.head(10), use_container_width=True)
 
     # --- TAB 3: AI INSIGHTS ---
-    with tab_ai:
-        st.title("🧠 Trợ Lý AI Phân Tích")
-        if df_db.empty or len(df_db) < 5:
-            st.warning("⚠️ Cần thêm dữ liệu để AI phân tích.")
-        else:
-            # Đồng bộ tên cột 'machine_id'
-            m_col_ai = 'machine_id'
-            ai_1, ai_2, ai_3 = st.tabs(["🚩 CẢNH BÁO", "🏗️ RỦI RO THIẾT BỊ", "📊 DỰ BÁO"])
+    # --- TAB 3: AI ENTERPRISE INSIGHTS ---
+with tab_ai:
+    st.title("🧠 AI Decision Intelligence")
+    st.caption("Phân tích – Chẩn đoán – Khuyến nghị – Dự báo")
 
-            with ai_1:
-                threshold = df_db['CHI_PHÍ'].mean() + 2 * df_db['CHI_PHÍ'].std()
-                anomalies = df_db[df_db['CHI_PHÍ'] > threshold]
-                if not anomalies.empty:
-                    st.error(f"Phát hiện {len(anomalies)} ca vượt ngưỡng chi phí!")
-                    valid_cols = [c for c in ['confirmed_date', m_col_ai, 'CHI_PHÍ'] if c in anomalies.columns]
-                    st.dataframe(anomalies[valid_cols])
-                else:
-                    st.success("Không có bất thường chi phí.")
+    if df_db.empty or len(df_db) < 10:
+        st.warning("⚠️ Chưa đủ dữ liệu để AI phân tích (tối thiểu 10 ca).")
+    else:
+        ai_warn, ai_root, ai_action, ai_forecast = st.tabs([
+            "🚨 CẢNH BÁO SỚM",
+            "🔍 NGUYÊN NHÂN GỐC",
+            "🧩 KHUYẾN NGHỊ",
+            "📈 DỰ BÁO"
+        ])
 
-            with ai_2:
-                m_stats = df_db.groupby(m_col_ai).agg(count=('id','count'), cost=('CHI_PHÍ','sum')).reset_index()
-                m_stats['risk_score'] = ((m_stats['count']/m_stats['count'].max())*0.6 + (m_stats['cost']/m_stats['cost'].max())*0.4).round(2)
-                st.plotly_chart(px.bar(m_stats.nlargest(10, 'risk_score'), x='risk_score', y=m_col_ai, orientation='h', title="Top 10 Máy Rủi Ro Cao"))
+        # =====================================================
+        # 🚨 1. EARLY WARNING – CẢNH BÁO SỚM
+        # =====================================================
+        with ai_warn:
+            st.subheader("🚨 Cảnh báo chi phí & tần suất bất thường")
 
-            with ai_3:
-                monthly = df_db.groupby(['NĂM', 'THÁNG'])['CHI_PHÍ'].sum().reset_index()
-                if len(monthly) >= 2:
-                    forecast_val = monthly['CHI_PHÍ'].rolling(3, min_periods=1).mean().iloc[-1]
-                    st.metric("Dự báo chi phí tháng tới", f"{forecast_val:,.0f} đ")
+            alerts = []
+
+            for b in df_db['branch'].unique():
+                df_b = df_db[df_db['branch'] == b]
+                if len(df_b) < 5:
+                    continue
+
+                cost_th = df_b['CHI_PHÍ'].mean() + 2 * df_b['CHI_PHÍ'].std()
+                freq_th = df_b.groupby('machine_id').size().mean() + 2
+
+                ab_cost = df_b[df_b['CHI_PHÍ'] > cost_th]
+                ab_freq = (
+                    df_b.groupby('machine_id')
+                    .size()
+                    .reset_index(name='count')
+                    .query("count > @freq_th")
+                )
+
+                if not ab_cost.empty:
+                    alerts.append({
+                        "branch": b,
+                        "type": "Chi phí cao",
+                        "cases": len(ab_cost),
+                        "impact": "Nguy cơ vượt ngân sách"
+                    })
+
+                if not ab_freq.empty:
+                    alerts.append({
+                        "branch": b,
+                        "type": "Tần suất cao",
+                        "cases": len(ab_freq),
+                        "impact": "Thiết bị kém ổn định"
+                    })
+
+            if alerts:
+                st.error("⚠️ Phát hiện rủi ro vận hành")
+                st.dataframe(pd.DataFrame(alerts), use_container_width=True)
+            else:
+                st.success("✅ Không phát hiện bất thường nghiêm trọng")
+
+        # =====================================================
+        # 🔍 2. ROOT CAUSE – NGUYÊN NHÂN GỐC
+        # =====================================================
+        with ai_root:
+            st.subheader("🔍 Phân tích nguyên nhân gốc theo thiết bị")
+
+            m_stats = df_db.groupby('machine_id').agg(
+                total_cases=('id','count'),
+                total_cost=('CHI_PHÍ','sum'),
+                avg_cost=('CHI_PHÍ','mean'),
+                branch=('branch','first')
+            ).reset_index()
+
+            # Chuẩn hoá score
+            m_stats['freq_score'] = m_stats['total_cases'] / m_stats['total_cases'].max()
+            m_stats['cost_score'] = m_stats['total_cost'] / m_stats['total_cost'].max()
+
+            m_stats['risk_score'] = (0.6*m_stats['freq_score'] + 0.4*m_stats['cost_score']).round(2)
+
+            def explain(r):
+                if r['freq_score'] > 0.7 and r['cost_score'] > 0.7:
+                    return "Tần suất cao + chi phí cao"
+                if r['freq_score'] > 0.7:
+                    return "Tần suất lỗi cao"
+                if r['cost_score'] > 0.7:
+                    return "Chi phí sửa cao"
+                return "Bình thường"
+
+            m_stats['root_cause'] = m_stats.apply(explain, axis=1)
+
+            st.dataframe(
+                m_stats.sort_values('risk_score', ascending=False)
+                [['machine_id','branch','risk_score','root_cause']],
+                use_container_width=True
+            )
+
+        # =====================================================
+        # 🧩 3. ACTION RECOMMENDER – KHUYẾN NGHỊ
+        # =====================================================
+        with ai_action:
+            st.subheader("🧩 Khuyến nghị hành động cho quản lý")
+
+            recommendations = []
+
+            for _, r in m_stats.iterrows():
+                if r['risk_score'] >= 0.75:
+                    recommendations.append({
+                        "machine_id": r['machine_id'],
+                        "branch": r['branch'],
+                        "risk_score": r['risk_score'],
+                        "recommendation": "Xem xét thay thế / kiểm tra toàn diện",
+                        "expected_impact": "Giảm chi phí dài hạn"
+                    })
+                elif r['risk_score'] >= 0.55:
+                    recommendations.append({
+                        "machine_id": r['machine_id'],
+                        "branch": r['branch'],
+                        "risk_score": r['risk_score'],
+                        "recommendation": "Tăng tần suất bảo trì",
+                        "expected_impact": "Giảm số ca phát sinh"
+                    })
+
+            if recommendations:
+                st.warning("📌 AI đề xuất các hành động ưu tiên")
+                st.dataframe(pd.DataFrame(recommendations), use_container_width=True)
+            else:
+                st.success("✅ Không cần hành động đặc biệt")
+
+        # =====================================================
+        # 📈 4. FORECAST – DỰ BÁO
+        # =====================================================
+        with ai_forecast:
+            st.subheader("📈 Dự báo chi phí theo chi nhánh")
+
+            for b in df_db['branch'].unique():
+                df_b = df_db[df_db['branch'] == b]
+                monthly = df_b.groupby(['NĂM','THÁNG'])['CHI_PHÍ'].sum()
+
+                if len(monthly) >= 3:
+                    forecast = monthly.rolling(3, min_periods=1).mean().iloc[-1]
+                    st.metric(
+                        f"{b} – Dự báo tháng tới",
+                        f"{forecast:,.0f} đ"
+                    )
+
 
 if __name__ == "__main__":
     main()
