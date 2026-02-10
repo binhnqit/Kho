@@ -256,7 +256,7 @@ def main():
                     risk_df['mức_rủi_ro'] = risk_df['risk_score'].apply(risk_label)
                     st.dataframe(
                         risk_df.sort_values('risk_score', ascending=False)[
-                            ['machine_id', 'branch', 'so_ca', 'tong_chi_phi', 'risk_score', 'mức_rủi_ro']
+                            ['machine_code', 'branch', 'so_ca', 'tong_chi_phi', 'risk_score', 'mức_rủi_ro']
                         ], use_container_width=True
                     )
 
