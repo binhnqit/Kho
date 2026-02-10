@@ -491,44 +491,92 @@ def main():
     # --- TAB 3: AI INSIGHTS ---
     with tab_ai:
         st.title("🧠 AI Decision Intelligence")
+        st.caption("Phân tích – Giải thích – Khuyến nghị – Dự báo vận hành")
+
         if df_db.empty or len(df_db) < 10:
             st.warning("⚠️ Chưa đủ dữ liệu để AI phân tích (tối thiểu 10 ca).")
         else:
-            ai_warn, ai_root, ai_action, ai_forecast = st.tabs(["🚨 CẢNH BÁO SỚM", "🔍 NGUYÊN NHÂN GỐC", "🧩 KHUYẾN NGHỊ", "📈 DỰ BÁO"])
-            with ai_warn:
-                st.subheader("🚨 Cảnh báo chi phí & tần suất bất thường")
-                alerts = []
-                for b in df_db['branch'].unique():
-                    df_b = df_db[df_db['branch'] == b]
-                    if len(df_b) < 5: continue
-                    cost_th = df_b['CHI_PHÍ'].mean() + 2 * df_b['CHI_PHÍ'].std()
-                    freq_th = df_b.groupby('machine_id').size().mean() + 2
-                    ab_cost = df_b[df_b['CHI_PHÍ'] > cost_th]
-                    ab_freq = df_b.groupby('machine_id').size().reset_index(name='count').query("count > @freq_th")
-                    if not ab_cost.empty: alerts.append({"branch": b, "type": "Chi phí cao", "cases": len(ab_cost)})
-                    if not ab_freq.empty: alerts.append({"branch": b, "type": "Tần suất cao", "cases": len(ab_freq)})
-                if alerts: st.error("⚠️ Phát hiện rủi ro"); st.dataframe(pd.DataFrame(alerts), use_container_width=True)
-                else: st.success("✅ Hệ thống ổn định")
-            
+            ai_risk, ai_root, ai_action, ai_forecast = st.tabs([
+                "🚨 RỦI RO", "🔍 NGUYÊN NHÂN GỐC", "🧩 KHUYẾN NGHỊ", "📈 DỰ BÁO"
+            ])
+
+            # 1. AI Phân tích rủi ro
+            with ai_risk:
+                st.subheader("🚨 Phát hiện rủi ro vận hành")
+                risk_branch = df_db.groupby('branch').agg(
+                    total_cases=('id', 'count'),
+                    total_cost=('compensation', 'sum'),
+                    avg_cost=('compensation', 'mean')
+                ).reset_index()
+
+                cost_mean = risk_branch['avg_cost'].mean()
+                cost_std = risk_branch['avg_cost'].std()
+                risk_branch['risk_level'] = risk_branch['avg_cost'].apply(
+                    lambda x: "CAO" if x > cost_mean + cost_std else "BÌNH THƯỜNG"
+                )
+                
+                high_risk = risk_branch[risk_branch['risk_level'] == "CAO"]
+                if not high_risk.empty:
+                    st.error("⚠️ Phát hiện chi nhánh có rủi ro chi phí cao")
+                    st.dataframe(high_risk, use_container_width=True)
+                else:
+                    st.success("✅ Không phát hiện rủi ro nghiêm trọng")
+
+            # 2. AI Nguyên nhân gốc
             with ai_root:
-                st.subheader("🔍 Phân tích nguyên nhân gốc")
-                m_stats = df_db.groupby('machine_id').agg(total_cases=('id','count'), total_cost=('CHI_PHÍ','sum'), branch=('branch','first')).reset_index()
-                m_stats['risk_score'] = (0.6*(m_stats['total_cases']/m_stats['total_cases'].max()) + 0.4*(m_stats['total_cost']/m_stats['total_cost'].max())).round(2)
-                st.dataframe(m_stats.sort_values('risk_score', ascending=False), use_container_width=True)
+                st.subheader("🔍 Phân tích nguyên nhân gốc (Root Cause)")
+                machine_stats = df_db.groupby(['machine_id', 'branch']).agg(
+                    total_cases=('id', 'count'),
+                    total_cost=('compensation', 'sum'),
+                    avg_cost=('compensation', 'mean')
+                ).reset_index()
 
+                machine_stats['freq_score'] = machine_stats['total_cases'] / machine_stats['total_cases'].max()
+                machine_stats['cost_score'] = machine_stats['total_cost'] / machine_stats['total_cost'].max()
+                machine_stats['risk_score'] = (0.6 * machine_stats['freq_score'] + 0.4 * machine_stats['cost_score']).round(2)
+
+                def explain_root(row):
+                    if row['freq_score'] > 0.7 and row['cost_score'] > 0.7: return "Thiết bị lỗi lặp lại + chi phí cao"
+                    if row['freq_score'] > 0.7: return "Thiết bị lỗi lặp lại nhiều lần"
+                    if row['cost_score'] > 0.7: return "Chi phí sửa chữa cao bất thường"
+                    return "Bình thường"
+
+                machine_stats['root_cause'] = machine_stats.apply(explain_root, axis=1)
+                st.dataframe(machine_stats.sort_values('risk_score', ascending=False)[['machine_id', 'branch', 'risk_score', 'root_cause']], use_container_width=True)
+
+            # 3. AI Khuyến nghị
             with ai_action:
-                st.subheader("🧩 Khuyến nghị hành động")
-                recs = [{"machine_id": r['machine_id'], "recommendation": "Thay thế ngay" if r['risk_score']>0.8 else "Bảo trì định kỳ"} for _, r in m_stats.iterrows() if r['risk_score'] > 0.5]
-                if recs: st.warning("Đề xuất:"); st.dataframe(pd.DataFrame(recs), use_container_width=True)
+                st.subheader("🧩 Khuyến nghị hành động cho quản lý")
+                recommendations = []
+                for _, r in machine_stats.iterrows():
+                    if r['risk_score'] >= 0.75:
+                        recommendations.append({"machine_id": r['machine_id'], "branch": r['branch'], "recommendation": "Thay thế thiết bị mới", "impact": "Giảm chi phí dài hạn"})
+                    elif r['risk_score'] >= 0.55:
+                        recommendations.append({"machine_id": r['machine_id'], "branch": r['branch'], "recommendation": "Bảo trì định kỳ khẩn cấp", "impact": "Giảm gián đoạn"})
+                
+                if recommendations:
+                    st.dataframe(pd.DataFrame(recommendations), use_container_width=True)
+                else:
+                    st.success("✅ Hệ thống đang vận hành ổn định.")
 
+            # 4. AI Dự báo
             with ai_forecast:
-                st.subheader("📈 Dự báo chi phí")
+                st.subheader("📈 Dự báo chi phí tháng tiếp theo")
+                forecast_results = []
                 for b in df_db['branch'].unique():
                     df_b = df_db[df_db['branch'] == b]
-                    monthly = df_b.groupby(['NĂM','THÁNG'])['CHI_PHÍ'].sum()
-                    if len(monthly) >= 3:
-                        forecast = monthly.rolling(3, min_periods=1).mean().iloc[-1]
-                        st.metric(f"{b}", f"{forecast:,.0f} đ")
+                    monthly = df_b.groupby(['NĂM', 'THÁNG'])['compensation'].sum()
+                    if len(monthly) >= 2:
+                        # Dự báo đơn giản dựa trên trung bình trượt
+                        forecast_value = monthly.mean()
+                        forecast_results.append({"branch": b, "val": forecast_value})
+                
+                if forecast_results:
+                    cols = st.columns(len(forecast_results))
+                    for i, r in enumerate(forecast_results):
+                        cols[i].metric(r['branch'], f"{r['val']:,.0f} đ")
+                else:
+                    st.info("Chưa đủ dữ liệu lịch sử (Tháng/Năm) để dự báo.")
 
 
 
