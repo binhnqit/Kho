@@ -4,67 +4,67 @@ import hashlib
 import plotly.express as px
 from supabase import create_client
 from datetime import datetime
-t.set_page_config(page_title="4ORANGES OPS 2026", layout="wide", page_icon="🎨")
-# --- 1. KẾT NỐI HỆ THỐNG ---
+
+# 1. CẤU HÌNH TRANG (Bắt buộc đặt ở đầu file)
+st.set_page_config(page_title="4ORANGES OPS 2026", layout="wide", page_icon="🎨")
+
+# 2. HÀM BẢO MẬT
+def hash_password(password):
+    return hashlib.sha256(str.encode(password)).hexdigest()
 url = "https://cigbnbaanpebwrufzxfg.supabase.co"
 key = st.secrets["SUPABASE_KEY"]
 supabase = create_client(url, key)
-
-def hash_password(password):
-    return hashlib.sha256(str.encode(password)).hexdigest()
-
+# 3. FORM ĐĂNG KÝ
 def registration_form():
-    st.subheader("📝 Đăng ký tài khoản mới")
-    with st.form("reg_form"):
-        new_user = st.text_input("Tên đăng nhập (Username)")
+    st.markdown("### 📝 Đăng ký tài khoản")
+    with st.form("reg_form", clear_on_submit=True):
+        new_user = st.text_input("Tên đăng nhập")
         new_name = st.text_input("Họ và tên")
         new_pass = st.text_input("Mật khẩu", type="password")
         confirm_pass = st.text_input("Xác nhận mật khẩu", type="password")
-        submit_btn = st.form_submit_button("Đăng ký")
+        role = st.selectbox("Vai trò", ["User", "Admin"]) # Tùy chọn phân quyền
+        submit_btn = st.form_submit_button("Tạo tài khoản", use_container_width=True)
 
         if submit_btn:
-            if new_pass != confirm_pass:
-                st.error("❌ Mật khẩu xác nhận không khớp!")
-            elif not new_user or not new_pass:
-                st.warning("⚠️ Vui lòng điền đầy đủ thông tin.")
+            if not new_user or not new_pass:
+                st.error("Vui lòng điền đủ thông tin!")
+            elif new_pass != confirm_pass:
+                st.error("Mật khẩu không khớp!")
             else:
-                # Kiểm tra username tồn tại
-                check = supabase.table("users").select("*").eq("username", new_user).execute()
-                if check.data:
-                    st.error("🚫 Tên đăng nhập đã tồn tại!")
+                # Kiểm tra trùng username
+                exists = supabase.table("users").select("*").eq("username", new_user).execute()
+                if exists.data:
+                    st.error("Tên đăng nhập đã tồn tại!")
                 else:
-                    # Chèn user mới (Lưu ý: nên hash mật khẩu)
                     user_data = {
                         "username": new_user,
                         "full_name": new_name,
-                        "password": hash_password(new_pass) 
+                        "password": hash_password(new_pass),
+                        "role": role,
+                        "created_at": datetime.now().isoformat()
                     }
                     supabase.table("users").insert(user_data).execute()
-                    st.success("✅ Đăng ký thành công! Vui lòng chuyển sang Đăng nhập.")
+                    st.success("Đăng ký thành công! Hãy chuyển sang Đăng nhập.")
+
+# 4. FORM ĐĂNG NHẬP
 def login_form():
-    st.subheader("🔐 Đăng nhập hệ thống")
+    st.markdown("### 🔐 Đăng nhập hệ thống")
     with st.form("login_form"):
         user = st.text_input("Tên đăng nhập")
         pw = st.text_input("Mật khẩu", type="password")
-        login_btn = st.form_submit_button("Đăng nhập")
+        submit_btn = st.form_submit_button("Đăng nhập", type="primary", use_container_width=True)
 
-        if login_btn:
-            # Truy vấn user từ Supabase
+        if submit_btn:
             res = supabase.table("users").select("*").eq("username", user).execute()
-            
             if res.data:
-                stored_pw = res.data[0]['password']
-                # Kiểm tra mật khẩu (hash)
-                if hash_password(pw) == stored_pw:
+                if hash_password(pw) == res.data[0]['password']:
                     st.session_state["is_logged_in"] = True
                     st.session_state["user_info"] = res.data[0]
-                    st.success(f"Chào mừng {res.data[0]['full_name']}!")
                     st.rerun()
                 else:
-                    st.error("❌ Sai mật khẩu!")
+                    st.error("Sai mật khẩu!")
             else:
-                st.error("❌ Tài khoản không tồn tại!")
-# --- 2. HÀM XỬ LÝ DỮ LIỆU (KHỚP SCHEMA THỰC TẾ) ---
+                st.error("Tài khoản không tồn tại!")
 
 @st.cache_data(ttl=30)
 def load_repair_data_final():
@@ -93,23 +93,27 @@ def load_repair_data_final():
     except Exception as e:
         st.error(f"Lỗi hệ thống tải data: {e}")
         return pd.DataFrame()
-
-# --- 3. GIAO DIỆN CHÍNH ---
+# 5. HÀM MAIN ĐIỀU HƯỚNG
 def main():
     if "is_logged_in" not in st.session_state:
         st.session_state["is_logged_in"] = False
 
     if not st.session_state["is_logged_in"]:
         # Giao diện khi chưa đăng nhập
-        menu = ["Đăng nhập", "Đăng ký"]
-        choice = st.sidebar.selectbox("Lựa chọn", menu)
-
-        if choice == "Đăng nhập":
-            login_form()
-        else:
-            registration_form()
+        col1, col2, col3 = st.columns([1, 2, 1])
+        with col2:
+            mode = st.radio("Lựa chọn", ["Đăng nhập", "Đăng ký"], horizontal=True)
+            if mode == "Đăng nhập":
+                login_form()
+            else:
+                registration_form()
     else:
-        # Giao diện sau khi đăng nhập thành công
+        # GIAO DIỆN SAU KHI ĐĂNG NHẬP
+        with st.sidebar:
+            st.success(f"👤 {st.session_state['user_info']['full_name']}")
+            if st.button("Đăng xuất"):
+                st.session_state["is_logged_in"] = False
+                st.rerun()
         st.sidebar.success(f"🔓 Đang đăng nhập: {st.session_state['user_info']['full_name']}")
         if st.sidebar.button("Đăng xuất"):
             st.session_state["is_logged_in"] = False
