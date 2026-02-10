@@ -274,10 +274,9 @@ def main():
             else:
                 st.warning("Không có dữ liệu phù hợp với bộ lọc.")
 
-    # --- TAB 2: QUẢN TRỊ HỆ THỐNG ---
-    # =========================================================
 # TAB: QUẢN TRỊ & ĐIỀU HÀNH
 # =========================================================
+tab_home, tab_admin, tab_alert = st.tabs(["🏠 Trang chủ", "📥 Quản trị", "🚨 Cảnh báo"])
 with tab_admin:
     st.title("📥 Quản Trị & Điều Hành Chi Nhánh")
 
