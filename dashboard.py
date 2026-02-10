@@ -162,7 +162,7 @@ def main():
 
     # --- TAB 3: AI INSIGHTS ---
     # --- TAB 3: AI ENTERPRISE INSIGHTS ---
-with tab_ai:
+    with tab_ai:
     st.title("🧠 AI Decision Intelligence")
     st.caption("Phân tích – Chẩn đoán – Khuyến nghị – Dự báo")
 
