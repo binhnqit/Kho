@@ -711,7 +711,7 @@ def main():
             # 2. AI Nguyên nhân gốc
             with ai_root:
                 st.subheader("🔍 Phân tích nguyên nhân gốc (Root Cause)")
-                machine_stats = df_db.groupby(['machine_code', 'branch']).agg(
+                machine_stats = df_db.groupby(['machine_id', 'branch']).agg(
                     total_cases=('id', 'count'),
                     total_cost=('compensation', 'sum'),
                     avg_cost=('compensation', 'mean')
