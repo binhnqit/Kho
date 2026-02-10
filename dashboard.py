@@ -736,9 +736,9 @@ def main():
                 recommendations = []
                 for _, r in machine_stats.iterrows():
                     if r['risk_score'] >= 0.75:
-                        recommendations.append({"machine_id": r['machine_id'], "branch": r['branch'], "recommendation": "Thay thế thiết bị mới", "impact": "Giảm chi phí dài hạn"})
+                        recommendations.append({"machine_code": r['machine_code'], "branch": r['branch'], "recommendation": "Thay thế thiết bị mới", "impact": "Giảm chi phí dài hạn"})
                     elif r['risk_score'] >= 0.55:
-                        recommendations.append({"machine_id": r['machine_id'], "branch": r['branch'], "recommendation": "Bảo trì định kỳ khẩn cấp", "impact": "Giảm gián đoạn"})
+                        recommendations.append({"machine_code": r['machine_code'], "branch": r['branch'], "recommendation": "Bảo trì định kỳ khẩn cấp", "impact": "Giảm gián đoạn"})
                 
                 if recommendations:
                     st.dataframe(pd.DataFrame(recommendations), use_container_width=True)
