@@ -47,6 +47,7 @@ def main():
     st.set_page_config(page_title="4ORANGES OPS 2026", layout="wide", page_icon="🎨")
     df_db = load_repair_data_final()
 
+    # Tìm đến đoạn này trong hàm main() của bạn:
     tab_dash, tab_admin, tab_ai = st.tabs(["📊 BÁO CÁO VẬN HÀNH", "📥 QUẢN TRỊ HỆ THỐNG", "🧠 AI INSIGHTS"])
 
     # --- TAB 1: BÁO CÁO VẬN HÀNH ---
