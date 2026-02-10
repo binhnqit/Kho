@@ -45,40 +45,164 @@ def main():
 
     tab_dash, tab_admin, tab_ai = st.tabs(["📊 BÁO CÁO VẬN HÀNH", "📥 QUẢN TRỊ HỆ THỐNG", "🧠 AI INSIGHTS"])
 
-    # --- TAB 1: BÁO CÁO VẬN HÀNH ---
-    with tab_dash:
-        if df_db.empty:
-            st.info("Chưa có dữ liệu. Vui lòng nạp ở Tab Quản trị.")
+    
+    # ==============================
+# 📊 TAB BÁO CÁO VẬN HÀNH – ENTERPRISE
+# ==============================
+with tab_dash:
+    st.title("📊 Báo Cáo Vận Hành Toàn Hệ Thống")
+
+    if df_db.empty:
+        st.info("Chưa có dữ liệu vận hành.")
+        st.stop()
+
+    # -------- 1️⃣ BỘ LỌC TOÀN CỤC --------
+    with st.sidebar:
+        st.header("⚙️ Bộ lọc vận hành")
+
+        if st.button("🔄 Làm mới dữ liệu", use_container_width=True):
+            st.cache_data.clear()
+            st.rerun()
+
+        sel_region = st.selectbox(
+            "🌍 Miền",
+            ["Toàn quốc"] + sorted(df_db['branch'].unique().tolist())
+        )
+
+        f_mode = st.radio("🗓 Thời gian", ["Tháng / Năm", "Khoảng ngày"])
+
+        if f_mode == "Tháng / Năm":
+            sel_year = st.selectbox("Năm", sorted(df_db['NĂM'].unique(), reverse=True))
+            sel_month = st.selectbox(
+                "Tháng",
+                ["Tất cả"] + sorted(df_db[df_db['NĂM'] == sel_year]['THÁNG'].unique().tolist())
+            )
         else:
-            with st.sidebar:
-                st.header("⚙️ BỘ LỌC")
-                if st.button("🔄 LÀM MỚI DỮ LIỆU", use_container_width=True):
-                    st.cache_data.clear()
-                    st.rerun()
-                
-                f_mode = st.radio("Chế độ lọc:", ["Tháng/Năm", "Khoảng ngày"])
-                if f_mode == "Tháng/Năm":
-                    y_list = sorted(df_db['NĂM'].unique(), reverse=True)
-                    sel_y = st.selectbox("📅 Năm", y_list)
-                    m_list = sorted(df_db[df_db['NĂM'] == sel_y]['THÁNG'].unique().tolist())
-                    sel_m = st.selectbox("📆 Tháng", ["Tất cả"] + m_list)
-                    df_view = df_db[df_db['NĂM'] == sel_y].copy()
-                    if sel_m != "Tất cả": df_view = df_view[df_view['THÁNG'] == sel_m]
-                else:
-                    d_range = st.date_input("Chọn ngày", [df_db['confirmed_dt'].min().date(), df_db['confirmed_dt'].max().date()])
-                    df_view = df_db[(df_db['confirmed_dt'].dt.date >= d_range[0]) & (df_db['confirmed_dt'].dt.date <= d_range[1])].copy() if len(d_range)==2 else df_db
+            d_range = st.date_input(
+                "Khoảng ngày",
+                [df_db['confirmed_dt'].min().date(), df_db['confirmed_dt'].max().date()]
+            )
 
-            st.title("🚀 Chỉ Số Vận Hành")
-            c1, c2, c3 = st.columns(3)
-            c1.metric("💰 TỔNG CHI PHÍ", f"{df_view['CHI_PHÍ'].sum():,.0f} đ")
-            c2.metric("🛠️ SỐ CA", f"{len(df_view)} ca")
-            c3.metric("🏢 ĐIỂM NÓNG", df_view['branch'].value_counts().idxmax() if not df_view.empty else "N/A")
+    # -------- APPLY FILTER --------
+    df_view = df_db.copy()
 
-            st.divider()
-            order = ['Thứ 2', 'Thứ 3', 'Thứ 4', 'Thứ 5', 'Thứ 6', 'Thứ 7', 'Chủ Nhật']
-            day_stats = df_view['THỨ'].value_counts().reindex(order).fillna(0).reset_index()
-            day_stats.columns = ['NGÀY_TRONG_TUẦN', 'SỐ_CA']
-            st.plotly_chart(px.area(day_stats, x='NGÀY_TRONG_TUẦN', y='SỐ_CA', markers=True, title="Xu hướng sự vụ theo thứ"), use_container_width=True)
+    if sel_region != "Toàn quốc":
+        df_view = df_view[df_view['branch'] == sel_region]
+
+    if f_mode == "Tháng / Năm":
+        df_view = df_view[df_view['NĂM'] == sel_year]
+        if sel_month != "Tất cả":
+            df_view = df_view[df_view['THÁNG'] == sel_month]
+    else:
+        if len(d_range) == 2:
+            df_view = df_view[
+                (df_view['confirmed_dt'].dt.date >= d_range[0]) &
+                (df_view['confirmed_dt'].dt.date <= d_range[1])
+            ]
+
+    # -------- 2️⃣ EXECUTIVE SNAPSHOT --------
+    st.subheader("🚀 Tổng Quan Điều Hành")
+
+    total_cases = len(df_view)
+    total_cost = df_view['CHI_PHÍ'].sum()
+    avg_cost = df_view['CHI_PHÍ'].mean() if total_cases > 0 else 0
+
+    risk_machine_cnt = (
+        df_view.groupby('machine_id').size().sort_values(ascending=False) > 3
+    ).sum()
+
+    c1, c2, c3, c4 = st.columns(4)
+    c1.metric("🛠 Tổng số ca", f"{total_cases}")
+    c2.metric("💰 Tổng chi phí", f"{total_cost:,.0f} đ")
+    c3.metric("📉 Chi phí TB / ca", f"{avg_cost:,.0f} đ")
+    c4.metric("⚠️ Máy rủi ro cao", f"{risk_machine_cnt}")
+
+    st.divider()
+
+    # -------- 3️⃣ XU HƯỚNG & PHÂN BỔ --------
+    st.subheader("📈 Xu Hướng & Phân Bổ")
+
+    c_trend, c_dist = st.columns([6, 4])
+
+    with c_trend:
+        trend = (
+            df_view.groupby(df_view['confirmed_dt'].dt.date)['CHI_PHÍ']
+            .sum()
+            .reset_index()
+        )
+        fig_trend = px.line(
+            trend,
+            x='confirmed_dt',
+            y='CHI_PHÍ',
+            markers=True,
+            title="Xu hướng chi phí theo thời gian"
+        )
+        st.plotly_chart(fig_trend, use_container_width=True)
+
+    with c_dist:
+        dist = (
+            df_view.groupby('branch')['CHI_PHÍ']
+            .sum()
+            .reset_index()
+            .sort_values('CHI_PHÍ', ascending=False)
+        )
+        fig_dist = px.bar(
+            dist,
+            x='branch',
+            y='CHI_PHÍ',
+            title="Chi phí theo Chi nhánh"
+        )
+        st.plotly_chart(fig_dist, use_container_width=True)
+
+    st.divider()
+
+    # -------- 4️⃣ THIẾT BỊ & SỰ CỐ TRỌNG ĐIỂM --------
+    st.subheader("🧯 Thiết Bị & Sự Cố Trọng Điểm")
+
+    top_machine = (
+        df_view.groupby('machine_id')
+        .agg(
+            so_ca=('id', 'count'),
+            tong_chi_phi=('CHI_PHÍ', 'sum')
+        )
+        .reset_index()
+        .sort_values('so_ca', ascending=False)
+        .head(10)
+    )
+
+    c_m1, c_m2 = st.columns(2)
+
+    with c_m1:
+        st.markdown("**🔝 Top máy phát sinh sự cố**")
+        st.dataframe(top_machine, use_container_width=True)
+
+    with c_m2:
+        pareto = top_machine.copy()
+        pareto['cum_pct'] = pareto['tong_chi_phi'].cumsum() / pareto['tong_chi_phi'].sum()
+        fig_pareto = px.line(
+            pareto,
+            x='machine_id',
+            y='cum_pct',
+            markers=True,
+            title="Pareto 80/20 – Chi phí theo máy"
+        )
+        st.plotly_chart(fig_pareto, use_container_width=True)
+
+    st.divider()
+
+    # -------- 5️⃣ INSIGHT NHANH (RULE-BASED) --------
+    st.subheader("🧠 Insight Nhanh Cho Quản Lý")
+
+    if not top_machine.empty:
+        top = top_machine.iloc[0]
+        if top['so_ca'] >= 5:
+            st.warning(
+                f"⚠️ Máy **{top['machine_id']}** phát sinh **{top['so_ca']} ca**, "
+                f"tổng chi phí **{top['tong_chi_phi']:,.0f} đ**. "
+                "Khuyến nghị kiểm tra hoặc thay thế."
+            )
+        else:
+            st.success("✅ Không có máy nào vượt ngưỡng rủi ro trong kỳ này.")
 
     # --- TAB 2: QUẢN TRỊ HỆ THỐNG ---
     with tab_admin:
