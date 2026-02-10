@@ -274,315 +274,311 @@ def main():
             else:
                 st.warning("Không có dữ liệu phù hợp với bộ lọc.")
 
-# TAB: QUẢN TRỊ & ĐIỀU HÀNH
-# =========================================================
-tab_home, tab_admin, tab_alert = st.tabs(["🏠 Trang chủ", "📥 Quản trị", "🚨 Cảnh báo"])
-with tab_admin:
-    st.title("📥 Quản Trị & Điều Hành Chi Nhánh")
+    # --- TAB 2: QUẢN TRỊ HỆ THỐNG ---
+    with tab_admin:
+        st.title("📥 Quản Trị & Điều Hành Chi Nhánh")
 
-    # Khởi tạo các Sub-tabs bên trong Tab Quản trị
-    ad_sub1, ad_sub2, ad_sub3 = st.tabs([
-        "➕ NHẬP LIỆU", 
-        "🏢 CHI NHÁNH", 
-        "📜 AUDIT LOG"
-    ])
+        # Khởi tạo các Sub-tabs bên trong Tab Quản trị
+        ad_sub1, ad_sub2, ad_sub3 = st.tabs([
+            "➕ NHẬP LIỆU", 
+            "🏢 CHI NHÁNH", 
+            "📜 AUDIT LOG"
+        ])
 
-    # ---------------------------------------------------------
-    # SUB-TAB 1: NHẬP LIỆU
-    # ---------------------------------------------------------
-    with ad_sub1:
-        c_up, c_man = st.columns([5, 5])
+        # ---------------------------------------------------------
+        # SUB-TAB 1: NHẬP LIỆU
+        # ---------------------------------------------------------
+        with ad_sub1:
+            c_up, c_man = st.columns([5, 5])
 
-        # ---------- PHẦN A: CSV IMPORT ----------
-        with c_up:
-            st.subheader("📂 Import CSV (Enterprise)")
+            # ---------- PHẦN A: CSV IMPORT ----------
+            with c_up:
+                st.subheader("📂 Import CSV (Enterprise)")
 
-            # Kỳ vọng file CSV có cột machine_code thay vì machine_id (UUID) để người dùng dễ nhập
-            expected_cols = {
-                "machine_code", "branch", "customer_name", 
-                "confirmed_date", "issue_reason", "compensation"
-            }
+                expected_cols = {
+                    "machine_id", "branch", "customer_name", 
+                    "confirmed_date", "issue_reason", "compensation"
+                }
 
-            up_file = st.file_uploader(
-                "Chọn file CSV", 
-                type="csv", 
-                key="csv_admin_enterprise"
-            )
+                up_file = st.file_uploader(
+                    "Chọn file CSV", 
+                    type="csv", 
+                    key="csv_admin_enterprise"
+                )
 
-            if up_file:
-                try:
-                    df_up = pd.read_csv(up_file)
-                    st.markdown("### 🔍 Kiểm tra cấu trúc dữ liệu")
+                if up_file:
+                    try:
+                        df_up = pd.read_csv(up_file)
+                        st.markdown("### 🔍 Kiểm tra cấu trúc dữ liệu")
 
-                    missing_cols = expected_cols - set(df_up.columns)
-                    extra_cols = set(df_up.columns) - expected_cols
+                        missing_cols = expected_cols - set(df_up.columns)
+                        extra_cols = set(df_up.columns) - expected_cols
 
-                    if missing_cols:
-                        st.error(f"❌ Thiếu cột bắt buộc: {', '.join(missing_cols)}")
-                    else:
-                        st.success("✅ Cấu trúc hợp lệ")
-                        if extra_cols:
-                            st.warning(f"⚠️ Cột dư sẽ bỏ qua: {', '.join(extra_cols)}")
+                        if missing_cols:
+                            st.error(f"❌ Thiếu cột bắt buộc: {', '.join(missing_cols)}")
+                        else:
+                            st.success("✅ Cấu trúc hợp lệ")
+                            if extra_cols:
+                                st.warning(f"⚠️ Cột dư sẽ bỏ qua: {', '.join(extra_cols)}")
 
-                        st.markdown("### 👀 Xem trước dữ liệu (5 dòng)")
-                        st.dataframe(df_up.head(5), use_container_width=True)
+                            st.markdown("### 👀 Xem trước dữ liệu (5 dòng)")
+                            st.dataframe(df_up.head(5), use_container_width=True)
 
-                        if st.button(f"🚀 Xác nhận import {len(df_up)} dòng", use_container_width=True, type="primary"):
-                            try:
-                                # Lấy bảng mapping mã máy sang UUID
-                                res_m = supabase.table("machines").select("id, machine_code").execute()
-                                machine_map = {m['machine_code']: m['id'] for m in res_m.data}
-
+                            if st.button(f"🚀 Xác nhận import {len(df_up)} dòng", use_container_width=True, type="primary"):
                                 records = []
                                 audits = []
                                 
                                 for _, r in df_up.iterrows():
-                                    m_code = str(r["machine_code"]).strip().upper()
-                                    if m_code in machine_map:
-                                        # Khớp với Schema trong file đính kèm (không có source, created_by)
-                                        record = {
-                                            "machine_id": machine_map[m_code],
-                                            "branch": str(r["branch"]).strip(),
-                                            "customer_name": str(r["customer_name"]).strip(),
-                                            "confirmed_date": pd.to_datetime(r["confirmed_date"]).date().isoformat(),
-                                            "received_date": datetime.now().date().isoformat(),
-                                            "issue_reason": str(r["issue_reason"]).strip(),
-                                            "compensation": float(r["compensation"]),
-                                            "is_unrepairable": False,
-                                            "note": str(r.get("note", ""))
-                                        }
-                                        records.append(record)
-                                        
-                                        audits.append({
-                                            "action": "IMPORT_CSV",
-                                            "table_name": "repair_cases",
-                                            "actor": "admin@system",
-                                            "payload": str(record),
-                                            "created_at": datetime.now().isoformat()
-                                        })
+                                    # Chuẩn bị dữ liệu để insert vào repair_cases
+                                    record = {
+                                        "machine_id": str(r["machine_id"]).strip().upper(),
+                                        "branch": r["branch"],
+                                        "customer_name": r["customer_name"],
+                                        "confirmed_date": pd.to_datetime(r["confirmed_date"]).isoformat(),
+                                        "issue_reason": r["issue_reason"],
+                                        "compensation": float(r["compensation"]),
+                                        "received_date": datetime.now().isoformat(),
+                                        "note": "",
+                                        "is_unrepairable": False,
+                                        "source": "csv",
+                                        "created_by": "admin@system"
+                                    }
+                                    records.append(record)
 
-                                if records:
-                                    supabase.table("repair_cases").insert(records).execute()
-                                    try:
-                                        supabase.table("audit_logs").insert(audits).execute()
-                                    except: pass
-                                    
-                                    st.success(f"✅ Đã nạp thành công {len(records)} dòng!")
-                                    st.cache_data.clear()
-                                    st.rerun()
-                                else:
-                                    st.error("❌ Không tìm thấy mã máy nào khớp trong hệ thống.")
-                            except Exception as e:
-                                st.error(f"❌ Lỗi xử lý: {e}")
-
-                except Exception as e:
-                    st.error(f"❌ Không đọc được CSV: {e}")
-
-        # ---------- PHẦN B: MANUAL ENTRY ----------
-        with c_man:
-            st.subheader("✍️ Nhập ca sửa chữa đơn lẻ")
-
-            with st.form("f_manual_enterprise", clear_on_submit=True):
-                m1, m2 = st.columns(2)
-                with m1:
-                    f_m_code = st.text_input("Mã máy *", key="man_m_code")
-                    f_branch = st.selectbox("Chi nhánh *", ["Miền Bắc", "Miền Trung", "Miền Nam"], key="man_branch")
-                    f_cost = st.number_input("Chi phí", min_value=0, step=10000, key="man_cost")
-                with m2:
-                    f_customer = st.text_input("Khách hàng *", key="man_cust")
-                    f_confirmed = st.date_input("Ngày xác nhận", value=datetime.now(), key="man_date")
-                    f_reason = st.text_input("Nguyên nhân *", key="man_reason")
-
-                f_note = st.text_area("Ghi chú", key="man_note")
-
-                if st.form_submit_button("💾 Lưu dữ liệu", use_container_width=True):
-                    if not f_m_code or not f_customer or not f_reason:
-                        st.warning("⚠️ Vui lòng nhập đầy đủ các trường bắt buộc")
-                    else:
-                        try:
-                            # Tìm UUID từ mã máy
-                            res_m = supabase.table("machines").select("id").eq("machine_code", f_m_code.strip().upper()).execute()
-                            if not res_m.data:
-                                st.error(f"❌ Mã máy '{f_m_code}' không tồn tại.")
-                            else:
-                                real_uuid = res_m.data[0]['id']
-                                record = {
-                                    "machine_id": real_uuid,
-                                    "branch": f_branch,
-                                    "customer_name": f_customer.strip(),
-                                    "confirmed_date": f_confirmed.isoformat(),
-                                    "received_date": datetime.now().date().isoformat(),
-                                    "issue_reason": f_reason.strip(),
-                                    "note": f_note.strip(),
-                                    "compensation": float(f_cost),
-                                    "is_unrepairable": False
-                                }
-                                
-                                supabase.table("repair_cases").insert(record).execute()
-                                
-                                # Ghi log
-                                try:
-                                    audit = {
-                                        "action": "INSERT_MANUAL",
+                                    # Chuẩn bị dữ liệu log cho audit_logs
+                                    audits.append({
+                                        "action": "IMPORT_CSV",
                                         "table_name": "repair_cases",
                                         "actor": "admin@system",
-                                        "payload": str(record),
+                                        "source": "csv",
+                                        "payload": str(record), # Convert dict sang string để lưu
                                         "created_at": datetime.now().isoformat()
-                                    }
-                                    supabase.table("audit_logs").insert(audit).execute()
-                                except: pass
+                                    })
 
-                                st.success("✅ Lưu thành công")
+                                try:
+                                    supabase.table("repair_cases").insert(records).execute()
+                                    supabase.table("audit_logs").insert(audits).execute()
+                                    st.success("✅ Import & Audit thành công")
+                                    st.cache_data.clear()
+                                    st.rerun()
+                                except Exception as e:
+                                    st.error(f"❌ Lỗi import: {e}")
+
+                    except Exception as e:
+                        st.error(f"❌ Không đọc được CSV: {e}")
+
+            # ---------- PHẦN B: MANUAL ENTRY ----------
+            with c_man:
+                st.subheader("✍️ Nhập ca sửa chữa đơn lẻ")
+
+                with st.form("f_manual_enterprise", clear_on_submit=True):
+                    m1, m2 = st.columns(2)
+                    with m1:
+                        f_machine = st.text_input("Mã máy *")
+                        f_branch = st.selectbox("Chi nhánh *", ["Miền Bắc", "Miền Trung", "Miền Nam"])
+                        f_cost = st.number_input("Chi phí", min_value=0, step=10000)
+                    with m2:
+                        f_customer = st.text_input("Khách hàng *")
+                        f_confirmed = st.date_input("Ngày xác nhận", value=datetime.now())
+                        f_reason = st.text_input("Nguyên nhân *")
+
+                    f_note = st.text_area("Ghi chú")
+
+                    if st.form_submit_button("💾 Lưu dữ liệu", use_container_width=True):
+                        if not f_machine or not f_customer or not f_reason:
+                            st.warning("⚠️ Vui lòng nhập đầy đủ các trường bắt buộc")
+                        else:
+                            record = {
+                                "machine_id": f_machine.strip().upper(),
+                                "branch": f_branch,
+                                "customer_name": f_customer.strip(),
+                                "confirmed_date": f_confirmed.isoformat(),
+                                "received_date": datetime.now().isoformat(),
+                                "issue_reason": f_reason.strip(),
+                                "note": f_note.strip(),
+                                "compensation": float(f_cost),
+                                "is_unrepairable": False,
+                                "source": "manual",
+                                "created_by": "admin@system"
+                            }
+                            
+                            audit = {
+                                "action": "INSERT",
+                                "table_name": "repair_cases",
+                                "actor": "admin@system",
+                                "source": "manual",
+                                "payload": str(record),
+                                "created_at": datetime.now().isoformat()
+                            }
+
+                            try:
+                                supabase.table("repair_cases").insert(record).execute()
+                                supabase.table("audit_logs").insert(audit).execute()
+                                st.success("✅ Lưu & audit thành công")
                                 st.cache_data.clear()
                                 st.rerun()
-                        except Exception as e:
-                            st.error(f"❌ Lỗi DB: {e}")
+                            except Exception as e:
+                                st.error(f"❌ Lỗi DB: {e}")
 
-    # ---------------------------------------------------------
-    # SUB-TAB 2: CHI NHÁNH
-    # ---------------------------------------------------------
-    with ad_sub2:
-        st.subheader("🏢 Theo dõi vận hành theo chi nhánh")
-        sel_b = st.selectbox("Chọn chi nhánh xem nhanh", ["Miền Bắc", "Miền Trung", "Miền Nam"])
+        # ---------------------------------------------------------
+        # SUB-TAB 2: CHI NHÁNH
+        # ---------------------------------------------------------
+        with ad_sub2:
+            st.subheader("🏢 Theo dõi vận hành theo chi nhánh")
+            sel_b = st.selectbox("Chọn chi nhánh", ["Miền Bắc", "Miền Trung", "Miền Nam"])
 
-        if not df_db.empty:
-            # Xử lý xóa khoảng trắng trước khi lọc
-            df_temp = df_db.copy()
-            df_temp['branch'] = df_temp['branch'].astype(str).str.strip()
-            df_b = df_temp[df_temp["branch"] == sel_b]
+            if not df_db.empty:
+                df_b = df_db[df_db["branch"] == sel_b]
+                if not df_b.empty:
+                    view = (
+                        df_b.groupby("machine_id")
+                        .agg(so_ca=("id", "count"), tong_chi_phi=("compensation", "sum"))
+                        .reset_index()
+                        .sort_values("so_ca", ascending=False)
+                    )
+                    st.dataframe(view, use_container_width=True)
+                else:
+                    st.info("Không có dữ liệu chi nhánh này")
+
+        # ---------------------------------------------------------
+        # SUB-TAB 3: AUDIT LOG
+        # ---------------------------------------------------------
+        with ad_sub3:
+            st.subheader("📜 Nhật ký Audit hệ thống")
             
-            if not df_b.empty:
-                view = (
-                    df_b.groupby("machine_id")
-                    .agg(so_ca=("id", "count"), tong_chi_phi=("compensation", "sum"))
-                    .reset_index()
-                    .sort_values("so_ca", ascending=False)
-                )
-                st.dataframe(view, use_container_width=True)
-            else:
-                st.info(f"Không có dữ liệu cho chi nhánh {sel_b}")
+            # Nút làm mới tay để tránh việc cache làm mất log mới
+            if st.button("🔄 Làm mới Nhật ký"):
+                st.rerun()
 
-    # ---------------------------------------------------------
-    # SUB-TAB 3: AUDIT LOG
-    # ---------------------------------------------------------
-    with ad_sub3:
-        st.subheader("📜 Nhật ký Audit hệ thống")
-        if st.button("🔄 Làm mới Nhật ký"):
-            st.rerun()
+            try:
+                # Thực hiện truy vấn trực tiếp vào bảng audit_logs
+                res_audit = supabase.table("audit_logs").select("*").order("created_at", desc=True).limit(100).execute()
+                
+                if res_audit.data:
+                    df_audit = pd.DataFrame(res_audit.data)
+                    
+                    # Định dạng lại cột thời gian cho dễ nhìn
+                    if 'created_at' in df_audit.columns:
+                        df_audit['created_at'] = pd.to_datetime(df_audit['created_at']).dt.strftime('%Y-%m-%d %H:%M:%S')
+                    
+                    # Hiển thị bảng log
+                    st.dataframe(
+                        df_audit, 
+                        use_container_width=True,
+                        column_config={
+                            "payload": st.column_config.TextColumn("Dữ liệu chi tiết", width="medium"),
+                            "action": st.column_config.TextColumn("Hành động"),
+                            "created_at": st.column_config.TextColumn("Thời gian")
+                        }
+                    )
+                else:
+                    st.info("ℹ️ Hiện tại chưa có bản ghi nhật ký nào trong bảng 'audit_logs'.")
+                    st.caption("Gợi ý: Hãy thử thực hiện một lệnh Nhập liệu để tạo log.")
+                    
+            except Exception as e:
+                st.error("❌ Không thể kết nối với bảng 'audit_logs'")
+                with st.expander("Chi tiết lỗi kỹ thuật"):
+                    st.code(e)
+                st.warning("Mẹo: Đảm bảo bạn đã tạo bảng 'audit_logs' trong Supabase SQL Editor với các cột: id, action, table_name, actor, payload, created_at.")
 
-        try:
-            res_audit = supabase.table("audit_logs").select("*").order("created_at", desc=True).limit(100).execute()
-            if res_audit.data:
-                df_audit = pd.DataFrame(res_audit.data)
-                if 'created_at' in df_audit.columns:
-                    df_audit['created_at'] = pd.to_datetime(df_audit['created_at']).dt.strftime('%Y-%m-%d %H:%M:%S')
-                st.dataframe(df_audit, use_container_width=True)
-            else:
-                st.info("ℹ️ Chưa có bản ghi nhật ký nào.")
-        except Exception as e:
-            st.error(f"❌ Lỗi kết nối audit_logs: {e}")
+    with tab_alert:
+        st.title("🚨 Trung Tâm Cảnh Báo Vận Hành")
+        st.caption("Phát hiện sớm rủi ro – Giảm chi phí – Hành động kịp thời")
 
-
-# =========================================================
-# TAB: CẢNH BÁO (ALERT)
-# =========================================================
-with tab_alert:
-    st.title("🚨 Trung Tâm Cảnh Báo Vận Hành")
-    st.caption("Phát hiện sớm rủi ro – Giảm chi phí – Hành động kịp thời")
-
-    if df_db.empty or len(df_db) < 3:
-        st.info("📭 Chưa đủ dữ liệu để kích hoạt hệ thống cảnh báo.")
-    else:
-        # Chuẩn bị dữ liệu thời gian
-        df_alert = df_db.copy()
-        today = pd.Timestamp.now()
-        df_alert['week'] = df_alert['confirmed_dt'].dt.isocalendar().week
-        df_alert['year'] = df_alert['confirmed_dt'].dt.year
-
-        this_week_no = today.isocalendar().week
-        this_week = df_alert[df_alert['week'] == this_week_no]
-        last_week = df_alert[df_alert['week'] == (this_week_no - 1)]
-
-        # 1️⃣ KPI TỔNG QUAN
-        c1, c2, c3, c4 = st.columns(4)
-        c1.metric("🚨 Tổng ca sửa chữa", f"{len(df_alert)} ca")
-        
-        curr_cost = this_week['compensation'].sum()
-        prev_cost = last_week['compensation'].sum()
-        c2.metric(
-            "💰 Chi phí tuần này", 
-            f"{curr_cost:,.0f} đ",
-            delta=f"{curr_cost - prev_cost:,.0f} đ" if not last_week.empty else None,
-            delta_color="inverse"
-        )
-
-        c3.metric(
-            "🛠️ Số ca tuần này", 
-            len(this_week),
-            delta=len(this_week) - len(last_week) if not last_week.empty else None,
-            delta_color="inverse"
-        )
-
-        risk_branch = this_week['branch'].value_counts().idxmax() if not this_week.empty else "N/A"
-        c4.metric("🏢 Nhánh rủi ro nhất", risk_branch)
-
-        st.divider()
-
-        # 2️⃣ CẢNH BÁO CHI PHÍ THEO CHI NHÁNH
-        st.subheader("💰 Cảnh báo vượt ngưỡng chi phí")
-        branch_cost = df_alert.groupby('branch').agg(
-            total_cost=('compensation', 'sum'),
-            avg_cost=('compensation', 'mean'),
-            cases=('id', 'count')
-        ).reset_index()
-
-        avg_all_branches = branch_cost['total_cost'].mean()
-        branch_cost['threshold'] = avg_all_branches * 1.2 
-        branch_cost['status'] = branch_cost['total_cost'] > branch_cost['threshold']
-
-        high_cost_branch = branch_cost[branch_cost['status']]
-
-        if not high_cost_branch.empty:
-            st.error("⚠️ Phát hiện chi nhánh có tổng chi phí cao hơn 20% mức trung bình")
-            st.dataframe(high_cost_branch, use_container_width=True)
+        if df_db.empty or len(df_db) < 3: # Giảm ngưỡng để dễ test dữ liệu
+            st.info("📭 Chưa đủ dữ liệu để kích hoạt hệ thống cảnh báo.")
         else:
-            st.success("✅ Chi phí các chi nhánh đang trong tầm kiểm soát")
+            # Chuẩn bị dữ liệu thời gian
+            today = pd.Timestamp.now()
+            df_db['week'] = df_db['confirmed_dt'].dt.isocalendar().week
+            df_db['year'] = df_db['confirmed_dt'].dt.year
 
-        st.divider()
+            # Tách dữ liệu tuần này và tuần trước
+            this_week = df_db[df_db['week'] == today.isocalendar().week]
+            last_week = df_db[df_db['week'] == today.isocalendar().week - 1]
 
-        # 3️⃣ CẢNH BÁO MÁY SỬA QUÁ NHIỀU
-        st.subheader("🛠️ Thiết bị có tần suất sửa bất thường")
-        machine_stats = df_alert.groupby(['machine_id', 'branch']).agg(
-            total_cases=('id', 'count'),
-            total_cost=('compensation', 'sum')
-        ).reset_index()
+            # 1️⃣ KPI TỔNG QUAN
+            c1, c2, c3, c4 = st.columns(4)
+            c1.metric("🚨 Tổng ca sửa chữa", f"{len(df_db)} ca")
+            
+            curr_cost = this_week['compensation'].sum()
+            prev_cost = last_week['compensation'].sum()
+            c2.metric(
+                "💰 Chi phí tuần này", 
+                f"{curr_cost:,.0f} đ",
+                delta=f"{curr_cost - prev_cost:,.0f} đ" if not last_week.empty else None,
+                delta_color="inverse" # Đỏ nếu tăng chi phí
+            )
 
-        case_threshold = machine_stats['total_cases'].mean() + 1
-        risky_machines = machine_stats[machine_stats['total_cases'] > case_threshold]
+            c3.metric(
+                "🛠️ Số ca tuần này", 
+                len(this_week),
+                delta=len(this_week) - len(last_week) if not last_week.empty else None,
+                delta_color="inverse"
+            )
 
-        if not risky_machines.empty:
-            st.warning(f"⚠️ Phát hiện {len(risky_machines)} thiết bị sửa hơn mức trung bình ({case_threshold:.1f} lần)")
-            st.dataframe(risky_machines.sort_values('total_cases', ascending=False), use_container_width=True)
-        else:
-            st.success("✅ Không có máy nào hỏng quá thường xuyên")
+            risk_branch = this_week['branch'].value_counts().idxmax() if not this_week.empty else "N/A"
+            c4.metric("🏢 Nhánh rủi ro nhất", risk_branch)
 
-        st.divider()
+            st.divider()
 
-        # 4️⃣ SO SÁNH XU HƯỚNG
-        st.subheader("📈 Xu hướng vận hành (Tuần này vs Tuần trước)")
-        trend_data = pd.DataFrame({
-            "Chỉ số": ["Số lượng ca", "Tổng chi phí"],
-            "Tuần trước": [len(last_week), prev_cost],
-            "Tuần này": [len(this_week), curr_cost]
-        })
-        st.table(trend_data)
+            # 2️⃣ CẢNH BÁO CHI PHÍ THEO CHI NHÁNH
+            st.subheader("💰 Cảnh báo vượt ngưỡng chi phí")
+            branch_cost = df_db.groupby('branch').agg(
+                total_cost=('compensation', 'sum'),
+                avg_cost=('compensation', 'mean'),
+                cases=('id', 'count')
+            ).reset_index()
 
-        # 5️⃣ ĐIỂM RỦI RO (RISK SCORE)
-        st.subheader("🎯 Top 5 đối tượng cần kiểm tra ngay")
-        priority = machine_stats.copy()
-        if not priority.empty:
-            max_cases = priority['total_cases'].max() if priority['total_cases'].max() > 0 else 1
-            max_cost = priority['total_cost'].max() if priority['total_cost'].max() > 0 else 1
+            # Ngưỡng: Tổng chi phí > (Trung bình chi phí mỗi nhánh * 1.5)
+            avg_all_branches = branch_cost['total_cost'].mean()
+            branch_cost['threshold'] = avg_all_branches * 1.2 
+            branch_cost['status'] = branch_cost['total_cost'] > branch_cost['threshold']
+
+            high_cost_branch = branch_cost[branch_cost['status']]
+
+            if not high_cost_branch.empty:
+                st.error("⚠️ Phát hiện chi nhánh có tổng chi phí bất thường")
+                st.dataframe(high_cost_branch, use_container_width=True)
+            else:
+                st.success("✅ Chi phí các chi nhánh đang trong tầm kiểm soát")
+
+            st.divider()
+
+            # 3️⃣ CẢNH BÁO MÁY SỬA QUÁ NHIỀU
+            st.subheader("🛠️ Thiết bị có tần suất sửa bất thường")
+            machine_stats = df_db.groupby(['machine_id', 'branch']).agg(
+                total_cases=('id', 'count'),
+                total_cost=('compensation', 'sum')
+            ).reset_index()
+
+            # Ngưỡng sửa > trung bình + 1 (áp dụng cho tập dữ liệu nhỏ)
+            case_threshold = machine_stats['total_cases'].mean() + 1
+            risky_machines = machine_stats[machine_stats['total_cases'] > case_threshold]
+
+            if not risky_machines.empty:
+                st.warning(f"⚠️ Phát hiện {len(risky_machines)} thiết bị sửa hơn {case_threshold:.1f} lần")
+                st.dataframe(risky_machines.sort_values('total_cases', ascending=False), use_container_width=True)
+            else:
+                st.success("✅ Không có máy nào hỏng quá thường xuyên")
+
+            st.divider()
+
+            # 4️⃣ SO SÁNH XU HƯỚNG
+            st.subheader("📈 Xu hướng vận hành (Tuần này vs Tuần trước)")
+            trend_data = pd.DataFrame({
+                "Chỉ số": ["Số lượng ca", "Tổng chi phí"],
+                "Tuần trước": [len(last_week), prev_cost],
+                "Tuần này": [len(this_week), curr_cost]
+            })
+            st.table(trend_data) # Dùng table để hiển thị tĩnh cho rõ ràng
+
+            # 5️⃣ ĐIỂM RỦI RO (RISK SCORE)
+            st.subheader("🎯 Top 5 đối tượng cần kiểm tra ngay")
+            priority = machine_stats.copy()
+            # Tính toán risk score từ 0-1
+            max_cases = priority['total_cases'].max() if not priority.empty else 1
+            max_cost = priority['total_cost'].max() if not priority.empty else 1
             
             priority['risk_score'] = (
                 0.6 * (priority['total_cases'] / max_cases) + 
