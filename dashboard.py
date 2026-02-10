@@ -369,92 +369,68 @@ def main():
 
             # ---------- PHẦN B: MANUAL ENTRY ----------
             # ---------- PHẦN B: MANUAL ENTRY (NHẬP THỦ CÔNG) ----------
+        # ---------- PHẦN B: MANUAL ENTRY (NHẬP THỦ CÔNG) ----------
         with c_man:
             st.subheader("✍️ Nhập ca sửa chữa đơn lẻ")
 
-            # Sử dụng st.form để tránh việc ứng dụng load lại mỗi khi nhập 1 chữ
             with st.form("f_manual_enterprise", clear_on_submit=True):
                 m1, m2 = st.columns(2)
-                
                 with m1:
-                    # Dùng key duy nhất để không bị trùng lặp widget
-                    f_m_code = st.text_input("Mã máy (ví dụ: M001) *", key="input_machine_code")
-                    f_branch = st.selectbox("Chi nhánh *", ["Miền Bắc", "Miền Trung", "Miền Nam"], key="input_branch")
-                    # compensation trong DB là numeric, nên để min_value=0.0
-                    f_cost = st.number_input("Chi phí bồi thường (VNĐ)", min_value=0.0, step=1000.0, key="input_cost")
-                
+                    # Người dùng nhập mã máy dễ nhớ (ví dụ: M001)
+                    f_m_code = st.text_input("Mã máy (VD: M001, M002) *", key="man_m_code")
+                    f_branch = st.selectbox("Chi nhánh *", ["Miền Bắc", "Miền Trung", "Miền Nam"])
+                    f_cost = st.number_input("Chi phí bồi thường", min_value=0.0)
                 with m2:
-                    f_customer = st.text_input("Khách hàng *", key="input_customer")
-                    f_confirmed = st.date_input("Ngày xác nhận", value=datetime.now(), key="input_date")
-                    f_reason = st.text_input("Nguyên nhân hỏng *", key="input_reason")
+                    f_customer = st.text_input("Khách hàng *")
+                    f_confirmed = st.date_input("Ngày xác nhận", value=datetime.now())
+                    f_reason = st.text_input("Nguyên nhân hỏng *")
 
-                f_note = st.text_area("Ghi chú thêm", key="input_note")
+                f_note = st.text_area("Ghi chú")
+                submit = st.form_submit_button("💾 Lưu dữ liệu", use_container_width=True)
 
-                # Nút xác nhận nằm trong form
-                submit_button = st.form_submit_button("💾 Lưu dữ liệu", use_container_width=True)
-
-                if submit_button:
-                    # Bước 1: Kiểm tra bỏ trống
+                if submit:
                     if not f_m_code or not f_customer or not f_reason:
-                        st.warning("⚠️ Vui lòng điền đầy đủ các thông tin có dấu (*)")
+                        st.warning("⚠️ Vui lòng điền đủ thông tin dấu *")
                     else:
                         try:
-                            # Bước 2: Truy vấn lấy UUID từ bảng machines vì DB yêu cầu machine_id là uuid
-                            # Không được insert trực tiếp mã máy (M001) vào cột machine_id (uuid)
-                            res_m = supabase.table("machines").select("id").eq("machine_code", f_m_code.strip().upper()).execute()
+                            # 🔍 BƯỚC QUAN TRỌNG: Tìm UUID của máy dựa trên mã máy người dùng nhập
+                            # Giả định bảng 'machines' của bạn có cột 'machine_code' và 'id'
+                            res_machine = supabase.table("machines") \
+                                .select("id") \
+                                .eq("machine_code", f_m_code.strip().upper()) \
+                                .execute()
                             
-                            if not res_m.data:
-                                st.error(f"❌ Mã máy '{f_m_code}' không tồn tại trong hệ thống!")
+                            if not res_machine.data:
+                                # Nếu không tìm thấy, báo lỗi này đây
+                                st.error(f"❌ Không tìm thấy máy có mã '{f_m_code}' trong danh mục thiết bị!")
+                                st.info("Mẹo: Hãy kiểm tra lại Tab Quản lý máy xem mã này đã được đăng ký chưa.")
                             else:
-                                # Lấy UUID thực tế
-                                real_uuid = res_m.data[0]['id']
+                                # Nếu tìm thấy, lấy cái ID thực sự (UUID)
+                                real_uuid = res_machine.data[0]['id']
                                 
-                                # Bước 3: Chuẩn bị bản ghi khớp 100% với Schema Database của bạn
-                                # Tên cột phải trùng khớp với file CSV Supabase Snippet bạn gửi
+                                # Chuẩn bị dữ liệu để đẩy lên
                                 record = {
-                                    "machine_id": real_uuid,            # UUID máy
-                                    "branch": f_branch,                 # Text
-                                    "customer_name": f_customer.strip(), # Text
-                                    "confirmed_date": f_confirmed.isoformat(), # Date (YYYY-MM-DD)
-                                    "received_date": datetime.now().date().isoformat(), # Date (YYYY-MM-DD)
-                                    "issue_reason": f_reason.strip(),   # Text
-                                    "note": f_note.strip(),             # Text
-                                    "compensation": float(f_cost),      # Numeric
-                                    "is_unrepairable": False            # Boolean
+                                    "machine_id": real_uuid,  # Phải là UUID mới lưu được vào bảng repair_cases
+                                    "branch": f_branch,
+                                    "customer_name": f_customer.strip(),
+                                    "confirmed_date": f_confirmed.isoformat(),
+                                    "received_date": datetime.now().date().isoformat(),
+                                    "issue_reason": f_reason.strip(),
+                                    "note": f_note.strip(),
+                                    "compensation": float(f_cost),
+                                    "is_unrepairable": False
                                 }
                                 
-                                # Bước 4: Thực thi Insert
+                                # Thực hiện Insert
                                 supabase.table("repair_cases").insert(record).execute()
+                                st.success(f"✅ Đã lưu thành công cho máy {f_m_code}!")
                                 
-                                st.success(f"✅ Đã lưu thành công ca sửa chữa cho máy {f_m_code}")
-                                
-                                # Xóa cache để dữ liệu mới hiển thị ngay lập tức ở các tab khác
-                                if "df_db" in st.session_state:
-                                    st.cache_data.clear()
+                                # Làm mới lại dữ liệu toàn cục
+                                st.cache_data.clear()
                                 st.rerun()
-                                
+
                         except Exception as e:
-                            st.error(f"❌ Lỗi Database: {str(e)}")
-
-        # ---------------------------------------------------------
-        # SUB-TAB 2: CHI NHÁNH
-        # ---------------------------------------------------------
-        with ad_sub2:
-            st.subheader("🏢 Theo dõi vận hành theo chi nhánh")
-            sel_b = st.selectbox("Chọn chi nhánh", ["Miền Bắc", "Miền Trung", "Miền Nam"])
-
-            if not df_db.empty:
-                df_b = df_db[df_db["branch"] == sel_b]
-                if not df_b.empty:
-                    view = (
-                        df_b.groupby("machine_id")
-                        .agg(so_ca=("id", "count"), tong_chi_phi=("compensation", "sum"))
-                        .reset_index()
-                        .sort_values("so_ca", ascending=False)
-                    )
-                    st.dataframe(view, use_container_width=True)
-                else:
-                    st.info("Không có dữ liệu chi nhánh này")
+                            st.error(f"❌ Lỗi hệ thống: {e}")
 
         # ---------------------------------------------------------
         # SUB-TAB 3: AUDIT LOG
