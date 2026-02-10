@@ -369,56 +369,70 @@ def main():
 
             # ---------- PHẦN B: MANUAL ENTRY ----------
             with c_man:
-                st.subheader("✍️ Nhập ca sửa chữa đơn lẻ")
+    st.subheader("✍️ Nhập ca sửa chữa đơn lẻ")
 
-                with st.form("f_manual_enterprise", clear_on_submit=True):
-                    m1, m2 = st.columns(2)
-                    with m1:
-                        f_machine = st.text_input("Mã máy *")
-                        f_branch = st.selectbox("Chi nhánh *", ["Miền Bắc", "Miền Trung", "Miền Nam"])
-                        f_cost = st.number_input("Chi phí", min_value=0, step=10000)
-                    with m2:
-                        f_customer = st.text_input("Khách hàng *")
-                        f_confirmed = st.date_input("Ngày xác nhận", value=datetime.now())
-                        f_reason = st.text_input("Nguyên nhân *")
+    with st.form("f_manual_enterprise", clear_on_submit=True):
+        m1, m2 = st.columns(2)
+        with m1:
+            f_machine_code = st.text_input("Mã máy * (VD: M001)")
+            f_branch = st.selectbox("Chi nhánh *", ["Miền Bắc", "Miền Trung", "Miền Nam"])
+            f_cost = st.number_input("Chi phí", min_value=0, step=10000)
+        with m2:
+            f_customer = st.text_input("Khách hàng *")
+            f_confirmed = st.date_input("Ngày xác nhận", value=datetime.now())
+            f_reason = st.text_input("Nguyên nhân *")
 
-                    f_note = st.text_area("Ghi chú")
+        f_note = st.text_area("Ghi chú")
 
-                    if st.form_submit_button("💾 Lưu dữ liệu", use_container_width=True):
-                        if not f_machine or not f_customer or not f_reason:
-                            st.warning("⚠️ Vui lòng nhập đầy đủ các trường bắt buộc")
-                        else:
-                            record = {
-                                "machine_id": f_machine.strip().upper(),
-                                "branch": f_branch,
-                                "customer_name": f_customer.strip(),
-                                "confirmed_date": f_confirmed.isoformat(),
-                                "received_date": datetime.now().isoformat(),
-                                "issue_reason": f_reason.strip(),
-                                "note": f_note.strip(),
-                                "compensation": float(f_cost),
-                                "is_unrepairable": False,
-                                "source": "manual",
-                                "created_by": "admin@system"
-                            }
-                            
+        if st.form_submit_button("💾 Lưu dữ liệu", use_container_width=True):
+            if not f_machine_code or not f_customer or not f_reason:
+                st.warning("⚠️ Vui lòng nhập đầy đủ các trường bắt buộc")
+            else:
+                try:
+                    # 1. TÌM UUID CỦA MÁY TỪ MÃ MÁY (Vì DB yêu cầu machine_id là UUID)
+                    res_m = supabase.table("machines").select("id").eq("machine_code", f_machine_code.strip().upper()).execute()
+                    
+                    if not res_m.data:
+                        st.error(f"❌ Không tìm thấy máy có mã '{f_machine_code}' trong hệ thống.")
+                    else:
+                        real_machine_uuid = res_m.data[0]['id']
+
+                        # 2. CHUẨN BỊ DỮ LIỆU KHỚP VỚI SCHEMA TRONG FILE CSV
+                        record = {
+                            "machine_id": real_machine_uuid,
+                            "branch": f_branch,
+                            "customer_name": f_customer.strip(),
+                            "confirmed_date": f_confirmed.isoformat(),
+                            "received_date": datetime.now().date().isoformat(),
+                            "issue_reason": f_reason.strip(),
+                            "note": f_note.strip(),
+                            "compensation": float(f_cost),
+                            "is_unrepairable": False
+                            # Đã bỏ 'source' và 'created_by' vì không có trong DB của bạn
+                        }
+                        
+                        # 3. LƯU VÀO DATABASE
+                        supabase.table("repair_cases").insert(record).execute()
+                        
+                        # 4. AUDIT LOGS (Chỉ chạy nếu bạn có bảng này, nếu không hãy xóa đoạn này)
+                        try:
                             audit = {
                                 "action": "INSERT",
                                 "table_name": "repair_cases",
-                                "actor": "admin@system",
-                                "source": "manual",
+                                "actor": st.session_state.get('user_info', {}).get('username', 'system'),
                                 "payload": str(record),
                                 "created_at": datetime.now().isoformat()
                             }
+                            supabase.table("audit_logs").insert(audit).execute()
+                        except:
+                            pass # Bỏ qua nếu bảng audit chưa tạo
 
-                            try:
-                                supabase.table("repair_cases").insert(record).execute()
-                                supabase.table("audit_logs").insert(audit).execute()
-                                st.success("✅ Lưu & audit thành công")
-                                st.cache_data.clear()
-                                st.rerun()
-                            except Exception as e:
-                                st.error(f"❌ Lỗi DB: {e}")
+                        st.success(f"✅ Đã lưu ca sửa chữa cho máy {f_machine_code}")
+                        st.cache_data.clear()
+                        st.rerun()
+
+                except Exception as e:
+                    st.error(f"❌ Lỗi hệ thống: {e}")
 
         # ---------------------------------------------------------
         # SUB-TAB 2: CHI NHÁNH
