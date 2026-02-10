@@ -159,120 +159,133 @@ def main():
         st.info("Chưa có dữ liệu. Vui lòng nạp ở Tab Quản trị.")
     else:
         # --- BƯỚC CHUẨN BỊ: MAPPING MACHINE_CODE ---
-        # 1. Lấy danh sách máy để tra cứu (Map UUID -> Mã máy)
-        res_m = supabase.table("machines").select("id, machine_code").execute()
-        map_dict = {m['id']: m['machine_code'] for m in res_m.data}
-        
-        # 2. Thêm cột machine_code và chuẩn hóa cột tiền/ngày vào df_db
-        df_db['machine_code'] = df_db['machine_id'].map(map_dict).fillna("Chưa rõ")
-        df_db['confirmed_dt'] = pd.to_datetime(df_db['confirmed_date'])
-        df_db['NĂM'] = df_db['confirmed_dt'].dt.year
-        df_db['THÁNG'] = df_db['confirmed_dt'].dt.month
-        # Đảm bảo cột CHI_PHÍ tồn tại (lấy từ compensation)
-        df_db['CHI_PHÍ'] = df_db['compensation'].astype(float)
+        try:
+            # 1. Lấy danh sách máy để tra cứu (Map UUID -> Mã máy)
+            res_m = supabase.table("machines").select("id, machine_code").execute()
+            map_dict = {m['id']: str(m['machine_code']) for m in res_m.data}
+            
+            # 2. Tạo bản sao để xử lý dữ liệu tránh lỗi SettingWithCopyWarning
+            df_process = df_db.copy()
+            
+            # Ánh xạ ID sang Mã máy thân thiện
+            df_process['machine_code'] = df_process['machine_id'].map(map_dict).fillna("Chưa rõ")
+            
+            # Chuyển đổi kiểu dữ liệu an toàn
+            df_process['confirmed_dt'] = pd.to_datetime(df_process['confirmed_date'], errors='coerce')
+            df_process['NĂM'] = df_process['confirmed_dt'].dt.year
+            df_process['THÁNG'] = df_process['confirmed_dt'].dt.month
+            
+            # Ép kiểu số cho cột tiền (Sửa lỗi sai cột DB từ boolean sang numeric nếu có)
+            df_process['CHI_PHÍ'] = pd.to_numeric(df_process['compensation'], errors='coerce').fillna(0)
 
-        # ---------- SIDEBAR FILTER ----------
-        with st.sidebar:
-            st.header("⚙️ BỘ LỌC BÁO CÁO")
-            if st.button("🔄 Làm mới dữ liệu", key="refresh_dash"):
-                st.cache_data.clear()
-                st.rerun()
+            # ---------- SIDEBAR FILTER ----------
+            with st.sidebar:
+                st.header("⚙️ BỘ LỌC BÁO CÁO")
+                if st.button("🔄 Làm mới dữ liệu", key="refresh_dash_button"):
+                    st.cache_data.clear()
+                    st.rerun()
 
-            f_mode = st.radio("Chế độ lọc thời gian", ["Tháng / Năm", "Khoảng ngày"])
+                f_mode = st.radio("Chế độ lọc thời gian", ["Tháng / Năm", "Khoảng ngày"])
 
-            if f_mode == "Tháng / Năm":
-                y_list = sorted(df_db['NĂM'].unique(), reverse=True)
-                sel_y = st.selectbox("Năm", y_list)
-                m_list = sorted(df_db[df_db['NĂM'] == sel_y]['THÁNG'].unique())
-                sel_m = st.selectbox("Tháng", ["Tất cả"] + m_list)
-                
-                df_view = df_db[df_db['NĂM'] == sel_y].copy()
-                if sel_m != "Tất cả":
-                    df_view = df_view[df_view['THÁNG'] == sel_m]
-            else:
-                d_range = st.date_input("Khoảng ngày", [df_db['confirmed_dt'].min(), df_db['confirmed_dt'].max()])
-                if len(d_range) == 2:
-                    df_view = df_db[(df_db['confirmed_dt'].dt.date >= d_range[0]) & 
-                                    (df_db['confirmed_dt'].dt.date <= d_range[1])].copy()
+                if f_mode == "Tháng / Năm":
+                    y_list = sorted(df_process['NĂM'].dropna().unique().astype(int), reverse=True)
+                    if y_list:
+                        sel_y = st.selectbox("Năm", y_list)
+                        m_list = sorted(df_process[df_process['NĂM'] == sel_y]['THÁNG'].dropna().unique().astype(int))
+                        sel_m = st.selectbox("Tháng", ["Tất cả"] + list(m_list))
+                        
+                        df_view = df_process[df_process['NĂM'] == sel_y].copy()
+                        if sel_m != "Tất cả":
+                            df_view = df_view[df_view['THÁNG'] == sel_m]
+                    else:
+                        df_view = df_process.copy()
                 else:
-                    df_view = df_db.copy()
+                    # Lọc theo khoảng ngày
+                    min_date = df_process['confirmed_dt'].min().date() if not df_process.empty else datetime.now().date()
+                    max_date = df_process['confirmed_dt'].max().date() if not df_process.empty else datetime.now().date()
+                    
+                    d_range = st.date_input("Khoảng ngày", [min_date, max_date])
+                    
+                    if isinstance(d_range, list) and len(d_range) == 2:
+                        df_view = df_process[(df_process['confirmed_dt'].dt.date >= d_range[0]) & 
+                                             (df_process['confirmed_dt'].dt.date <= d_range[1])].copy()
+                    else:
+                        df_view = df_process.copy()
 
-            sel_branch = st.multiselect("Chi nhánh", options=sorted(df_db['branch'].unique()), 
-                                        default=sorted(df_db['branch'].unique()))
-            df_view = df_view[df_view['branch'].isin(sel_branch)]
+                # Lọc theo chi nhánh
+                all_branches = sorted(df_process['branch'].unique())
+                sel_branch = st.multiselect("Chi nhánh", options=all_branches, default=all_branches)
+                df_view = df_view[df_view['branch'].isin(sel_branch)]
 
-        # ---------- KPI LAYER ----------
-        st.subheader("🚀 Chỉ số tổng quan")
-        if not df_view.empty:
-            k1, k2, k3, k4 = st.columns(4)
-            k1.metric("💰 Tổng chi phí", f"{df_view['CHI_PHÍ'].sum():,.0f} đ")
-            k2.metric("🛠️ Tổng số ca", f"{len(df_view)} ca")
-            k3.metric("🏢 Chi nhánh HOT", df_view['branch'].value_counts().idxmax())
-            # Hiển thị Mã máy rủi ro nhất thay vì UUID
-            k4.metric("⚠️ Máy rủi ro nhất", df_view['machine_code'].value_counts().idxmax())
+            # ---------- HIỂN THỊ NỘI DUNG CHÍNH ----------
+            if not df_view.empty:
+                # KPI LAYER
+                st.subheader("🚀 Chỉ số tổng quan")
+                k1, k2, k3, k4 = st.columns(4)
+                k1.metric("💰 Tổng chi phí", f"{df_view['CHI_PHÍ'].sum():,.0f} đ")
+                k2.metric("🛠️ Tổng số ca", f"{len(df_view)} ca")
+                k3.metric("🏢 Chi nhánh HOT", df_view['branch'].value_counts().idxmax())
+                k4.metric("⚠️ Máy rủi ro nhất", df_view['machine_code'].value_counts().idxmax())
 
-            st.divider()
+                st.divider()
 
-            # ---------- TREND ANALYSIS ----------
-            st.subheader("📈 Xu hướng sự cố theo tháng")
-            trend = df_view.groupby(['NĂM', 'THÁNG']).agg(so_ca=('id', 'count'), chi_phi=('CHI_PHÍ', 'sum')).reset_index()
-            # Đảm bảo có thư viện plotly.express as px
-            import plotly.express as px
-            fig_trend = px.line(trend, x='THÁNG', y='so_ca', color='NĂM', markers=True)
-            st.plotly_chart(fig_trend, use_container_width=True)
+                # TREND ANALYSIS
+                st.subheader("📈 Xu hướng sự cố theo tháng")
+                import plotly.express as px
+                trend = df_view.groupby(['NĂM', 'THÁNG']).size().reset_index(name='so_ca')
+                fig_trend = px.line(trend, x='THÁNG', y='so_ca', color='NĂM', markers=True, 
+                                    labels={'THÁNG': 'Tháng', 'so_ca': 'Số lượng ca'})
+                st.plotly_chart(fig_trend, use_container_width=True)
 
-            # ---------- RISK SCORING ----------
-            st.divider()
-            st.subheader("⚠️ Bảng xếp hạng rủi ro (Risk Scoring)")
-            
-            risk_df = df_view.groupby('machine_code').agg(
-                so_ca=('id', 'count'),
-                tong_chi_phi=('CHI_PHÍ', 'sum'),
-                last_case=('confirmed_dt', 'max'),
-                branch=('branch', 'first')
-            ).reset_index()
-
-            if not risk_df.empty:
-                # Tính điểm rủi ro từ 0-1
-                risk_df['freq_score'] = risk_df['so_ca'] / risk_df['so_ca'].max()
-                risk_df['cost_score'] = risk_df['tong_chi_phi'] / risk_df['tong_chi_phi'].max()
+                # RISK SCORING
+                st.divider()
+                st.subheader("⚠️ Bảng xếp hạng rủi ro (Risk Scoring)")
                 
-                def risk_label(v):
-                    if v >= 0.75: return "🔴 Cao"
-                    if v >= 0.5: return "🟠 Trung bình"
-                    return "🟢 Thấp"
+                risk_df = df_view.groupby('machine_code').agg(
+                    so_ca=('id', 'count'),
+                    tong_chi_phi=('CHI_PHÍ', 'sum'),
+                    branch=('branch', 'first')
+                ).reset_index()
 
-                risk_df['risk_score'] = (0.6 * risk_df['freq_score'] + 0.4 * risk_df['cost_score']).round(2)
-                risk_df['Mức rủi ro'] = risk_df['risk_score'].apply(risk_label)
+                if not risk_df.empty:
+                    # Chống chia cho 0 nếu chỉ có 1 dòng
+                    max_ca = risk_df['so_ca'].max() if risk_df['so_ca'].max() > 0 else 1
+                    max_cost = risk_df['tong_chi_phi'].max() if risk_df['tong_chi_phi'].max() > 0 else 1
+                    
+                    risk_df['freq_score'] = risk_df['so_ca'] / max_ca
+                    risk_df['cost_score'] = risk_df['tong_chi_phi'] / max_cost
+                    risk_df['risk_score'] = (0.6 * risk_df['freq_score'] + 0.4 * risk_df['cost_score']).round(2)
+
+                    def risk_label(v):
+                        if v >= 0.75: return "🔴 Cao"
+                        if v >= 0.5: return "🟠 Trung bình"
+                        return "🟢 Thấp"
+
+                    risk_df['Mức rủi ro'] = risk_df['risk_score'].apply(risk_label)
+                    st.dataframe(
+                        risk_df.sort_values('risk_score', ascending=False)[
+                            ['machine_code', 'branch', 'so_ca', 'tong_chi_phi', 'risk_score', 'Mức rủi ro']
+                        ], use_container_width=True
+                    )
+
+                # DRILL DOWN
+                st.divider()
+                st.subheader("🔍 Drill-down chi tiết theo thiết bị")
+                available_codes = sorted(df_view['machine_code'].unique())
+                sel_machine_code = st.selectbox("Chọn mã máy để xem lịch sử", available_codes, key="drill_down_select")
                 
+                df_machine = df_view[df_view['machine_code'] == sel_machine_code]
                 st.dataframe(
-                    risk_df.sort_values('risk_score', ascending=False)[
-                        ['machine_code', 'branch', 'so_ca', 'tong_chi_phi', 'risk_score', 'Mức rủi ro']
-                    ], use_container_width=True
+                    df_machine.sort_values('confirmed_dt', ascending=False)[
+                        ['confirmed_date', 'customer_name', 'issue_reason', 'compensation', 'note']
+                    ], 
+                    use_container_width=True
                 )
-
-            # ---------- DRILL DOWN (ĐÃ FIX HIỂN THỊ MACHINE_CODE) ----------
-            st.divider()
-            st.subheader("🔍 Drill-down chi tiết theo thiết bị")
-            
-            # 1. Lấy danh sách mã máy duy nhất từ dữ liệu đang hiển thị
-            available_codes = sorted(df_view['machine_code'].unique())
-            
-            # 2. Selectbox hiển thị Mã máy (1641, M001...)
-            sel_machine_code = st.selectbox("Chọn mã máy để xem lịch sử", available_codes)
-            
-            # 3. Lọc theo mã máy đã chọn
-            df_machine = df_view[df_view['machine_code'] == sel_machine_code]
-            
-            # 4. Hiển thị bảng chi tiết
-            st.dataframe(
-                df_machine.sort_values('confirmed_dt', ascending=False)[
-                    ['confirmed_date', 'customer_name', 'issue_reason', 'compensation', 'note']
-                ], 
-                use_container_width=True
-            )
-        else:
-            st.warning("Không có dữ liệu phù hợp với bộ lọc.")
+            else:
+                st.warning("Không có dữ liệu phù hợp với bộ lọc.")
+                
+        except Exception as e:
+            st.error(f"Đã xảy ra lỗi khi xử lý dữ liệu: {e}")
 
     # --- TAB 2: QUẢN TRỊ HỆ THỐNG ---
     with tab_admin:
