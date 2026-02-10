@@ -13,67 +13,27 @@ supabase = create_client(url, key)
 @st.cache_data(ttl=30)
 def load_repair_data_final():
     try:
-        # 1. Tải dữ liệu từ Supabase
-        res_repair = supabase.table("repair_cases").select("*").order("created_at", desc=True).execute()
-        res_machines = supabase.table("machines").select("id, machine_code").execute()
+        res = supabase.table("repair_cases").select("*").order("created_at", desc=True).execute()
+        if not res.data: return pd.DataFrame()
         
-        if not res_repair.data: 
-            return pd.DataFrame()
+        df = pd.DataFrame(res.data)
         
-        df_repair = pd.DataFrame(res_repair.data)
-        df_m = pd.DataFrame(res_machines.data)
-
-        # 2. MERGE để lấy machine_code (Xử lý cẩn thận để tránh mất cột 'id')
-        if not df_m.empty and 'machine_id' in df_repair.columns:
-            df_repair['machine_id'] = df_repair['machine_id'].astype(str)
-            df_m['id'] = df_m['id'].astype(str)
-            
-            # Chỉ lấy machine_code từ bảng máy, tránh lấy cột 'id' của bảng máy gây trùng lặp
-            df = pd.merge(
-                df_repair, 
-                df_m[['id', 'machine_code']], 
-                left_on='machine_id', 
-                right_on='id', 
-                how='left',
-                suffixes=('', '_m') # Nếu trùng tên thì cột bảng máy sẽ có đuôi _m
-            )
-            # Ưu tiên dùng machine_code, nếu không có thì dùng machine_id
-            df['machine_id_display'] = df['machine_code'].fillna(df['machine_id'])
-        else:
-            df = df_repair
-            df['machine_id_display'] = df.get('machine_id', 'N/A')
-
-        # 3. XỬ LÝ NGÀY THÁNG
+        # --- ĐỒNG BỘ CỘT NGÀY THEO SCHEMA ---
+        df['confirmed_dt'] = pd.to_datetime(df['confirmed_date'], errors='coerce')
         df['created_dt'] = pd.to_datetime(df['created_at'], errors='coerce')
-        df['confirmed_dt_raw'] = pd.to_datetime(df['confirmed_date'], errors='coerce')
-        df['confirmed_dt'] = df['confirmed_dt_raw'].fillna(df['created_dt'])
         
-        # Đảm bảo loại bỏ dòng lỗi ngày trước khi trích xuất Năm/Tháng
         df = df.dropna(subset=['confirmed_dt'])
 
         df['NĂM'] = df['confirmed_dt'].dt.year.astype(int)
         df['THÁNG'] = df['confirmed_dt'].dt.month.astype(int)
+        day_map = {'Monday': 'Thứ 2', 'Tuesday': 'Thứ 3', 'Wednesday': 'Thứ 4',
+                   'Thursday': 'Thứ 5', 'Friday': 'Thứ 6', 'Saturday': 'Thứ 7', 'Sunday': 'Chủ Nhật'}
+        df['THỨ'] = df['confirmed_dt'].dt.day_name().map(day_map)
 
-        # 4. XỬ LÝ CHI PHÍ (Đảm bảo tên cột là 'CHI_PHÍ' đúng như lỗi báo)
-        def clean_compensation(val):
-            if isinstance(val, bool): return 0.0
-            try:
-                return float(str(val).replace(',', ''))
-            except:
-                return 0.0
-
-        df['CHI_PHÍ'] = df['compensation'].apply(clean_compensation)
-
-        # 5. QUAN TRỌNG: Gán lại machine_id để các biểu đồ dùng machine_code thay vì UUID
-        # Nhưng vẫn giữ nguyên cột 'id' gốc của repair_cases để hàm .agg(so_ca=('id', 'count')) chạy được
-        df['machine_id'] = df['machine_id_display']
+        # --- ĐỒNG BỘ CỘT CHI PHÍ THEO SCHEMA ---
+        df['CHI_PHÍ'] = pd.to_numeric(df['compensation'], errors='coerce').fillna(0)
         
-        # Kiểm tra nếu cột 'id' bị biến mất hoặc đổi tên thì khôi phục lại
-        if 'id_x' in df.columns:
-            df['id'] = df['id_x']
-
-        return df.sort_values(by='confirmed_dt', ascending=False)
-
+        return df.sort_values(by='created_dt', ascending=False)
     except Exception as e:
         st.error(f"Lỗi hệ thống tải data: {e}")
         return pd.DataFrame()
