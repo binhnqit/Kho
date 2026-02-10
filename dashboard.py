@@ -43,11 +43,12 @@ def main():
     st.set_page_config(page_title="4ORANGES OPS 2026", layout="wide", page_icon="🎨")
     df_db = load_repair_data_final()
 
-    tab_dash, tab_admin, tab_alert, tab_ai = st.tabs([
+    tab_dash, tab_admin, tab_ai, tab_alert, tab_kpi = st.tabs([
         "📊 BÁO CÁO VẬN HÀNH", 
         "📥 QUẢN TRỊ HỆ THỐNG", 
-        "🚨 CẢNH BÁO VẬN HÀNH", # Tab mới thêm vào
-        "🧠 AI INSIGHTS"
+        "🧠 AI INSIGHTS",
+        "🚨 CẢNH BÁO",
+        "🎯 KPI QUẢN TRỊ"
     ])
 
     # =============================================================================
@@ -488,6 +489,94 @@ def main():
 
             top_risk = priority.sort_values('risk_score', ascending=False).head(5)
             st.dataframe(top_risk, use_container_width=True)
+    # TAB 5: 🎯 PERFORMANCE MANAGEMENT (KPI / SLA)
+    # ======================================================
+    with tab_kpi:
+        st.title("🎯 Performance Management – KPI Dashboard")
+        st.caption("Đánh giá hiệu suất – So sánh – Cảnh báo vượt ngưỡng")
+
+        if df_db.empty:
+            st.warning("⚠️ Chưa có dữ liệu để tính toán KPI")
+        else:
+            # 1️⃣ KPI TỔNG QUAN
+            st.subheader("📌 KPI Tổng Quan Hệ Thống")
+            k1, k2, k3, k4 = st.columns(4)
+
+            total_cases = len(df_db)
+            avg_cost_val = df_db['compensation'].mean()
+            repeat_rate = (df_db.groupby('machine_id').size().gt(1).sum() / df_db['machine_id'].nunique()) * 100
+
+            k1.metric("🛠️ Tổng số ca", total_cases)
+            k2.metric("💰 Chi phí TB / ca", f"{avg_cost_val:,.0f} đ")
+            k3.metric("♻️ Tỷ lệ máy lặp lỗi", f"{repeat_rate:.1f}%")
+            k4.metric("🏢 Số chi nhánh", df_db['branch'].nunique())
+
+            st.divider()
+
+            # 2️⃣ KPI THEO CHI NHÁNH
+            st.subheader("🏢 KPI Theo Chi Nhánh")
+            branch_kpi = df_db.groupby('branch').agg(
+                total_cases=('id', 'count'),
+                total_cost=('compensation', 'sum'),
+                avg_cost=('compensation', 'mean'),
+                unique_machines=('machine_id', 'nunique')
+            ).reset_index()
+
+            branch_kpi['cost_per_machine'] = (branch_kpi['total_cost'] / branch_kpi['unique_machines']).round(0)
+            st.dataframe(branch_kpi, use_container_width=True)
+
+            fig_branch = px.bar(branch_kpi, x='branch', y='avg_cost', 
+                                title="Chi phí trung bình / ca theo chi nhánh",
+                                color='avg_cost', color_continuous_scale='Reds')
+            st.plotly_chart(fig_branch, use_container_width=True)
+
+            st.divider()
+
+            # 3️⃣ KPI MÁY – TOP RỦI RO
+            st.subheader("🧰 KPI Thiết Bị (Top rủi ro)")
+            machine_kpi = df_db.groupby(['machine_id', 'branch']).agg(
+                cases=('id', 'count'),
+                cost=('compensation', 'sum')
+            ).reset_index()
+
+            # Tính toán điểm rủi ro
+            machine_kpi['risk_score'] = (
+                0.6 * (machine_kpi['cases'] / machine_kpi['cases'].max()) +
+                0.4 * (machine_kpi['cost'] / machine_kpi['cost'].max())
+            ).round(2)
+
+            st.dataframe(
+                machine_kpi.sort_values('risk_score', ascending=False).head(10),
+                use_container_width=True
+            )
+
+            st.divider()
+
+            # 4️⃣ KPI XU HƯỚNG
+            st.subheader("📈 Xu Hướng Hiệu Suất")
+            trend = df_db.groupby(['NĂM', 'THÁNG']).agg(
+                cases=('id', 'count'),
+                cost=('compensation', 'sum')
+            ).reset_index()
+            trend['period'] = trend['THÁNG'].astype(str) + "/" + trend['NĂM'].astype(str)
+
+            fig_trend = px.line(trend, x='period', y='cost', markers=True, title="Xu hướng tổng chi phí theo tháng")
+            st.plotly_chart(fig_trend, use_container_width=True)
+
+            st.divider()
+
+            # 5️⃣ KPI CẢNH BÁO SLA
+            st.subheader("🚨 Cảnh Báo KPI Vượt Ngưỡng")
+            SLA_COST = st.number_input("Ngưỡng chi phí trung bình tối đa cho phép / ca (đ)", 
+                                      min_value=0, value=2000000, step=100000)
+
+            breach = branch_kpi[branch_kpi['avg_cost'] > SLA_COST]
+
+            if not breach.empty:
+                st.error(f"⚠️ Phát hiện {len(breach)} chi nhánh vượt ngưỡng chi phí cam kết (SLA)")
+                st.dataframe(breach[['branch', 'avg_cost', 'total_cases']], use_container_width=True)
+            else:
+                st.success("✅ Tất cả chi nhánh nằm trong ngưỡng kiểm soát chi phí")
     # --- TAB 3: AI INSIGHTS ---
     with tab_ai:
         st.title("🧠 AI Decision Intelligence")
