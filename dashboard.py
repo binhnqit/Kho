@@ -49,7 +49,7 @@ def main():
     # ==============================
 # 📊 TAB BÁO CÁO VẬN HÀNH – ENTERPRISE
 # ==============================
-with tab_dash:
+    with tab_dash:
     st.title("📊 Báo Cáo Vận Hành Toàn Hệ Thống")
 
     if df_db.empty:
