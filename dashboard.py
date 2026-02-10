@@ -153,126 +153,126 @@ def main():
     # 📊 TAB BÁO CÁO VẬN HÀNH – ENTERPRISE EDITION
     # =============================================================================
     with tab_dash:
-        st.title("📊 BÁO CÁO VẬN HÀNH – DECISION DASHBOARD")
+    st.title("📊 BÁO CÁO VẬN HÀNH – DECISION DASHBOARD")
 
-        if df_db.empty:
-            st.info("Chưa có dữ liệu. Vui lòng nạp ở Tab Quản trị.")
-        else:
-            # ---------- SIDEBAR FILTER ----------
-            with st.sidebar:
-                st.header("⚙️ BỘ LỌC BÁO CÁO")
+    if df_db.empty:
+        st.info("Chưa có dữ liệu. Vui lòng nạp ở Tab Quản trị.")
+    else:
+        # --- BƯỚC CHUẨN BỊ: MAPPING MACHINE_CODE ---
+        # 1. Lấy danh sách máy để tra cứu (Map UUID -> Mã máy)
+        res_m = supabase.table("machines").select("id, machine_code").execute()
+        map_dict = {m['id']: m['machine_code'] for m in res_m.data}
+        
+        # 2. Thêm cột machine_code và chuẩn hóa cột tiền/ngày vào df_db
+        df_db['machine_code'] = df_db['machine_id'].map(map_dict).fillna("Chưa rõ")
+        df_db['confirmed_dt'] = pd.to_datetime(df_db['confirmed_date'])
+        df_db['NĂM'] = df_db['confirmed_dt'].dt.year
+        df_db['THÁNG'] = df_db['confirmed_dt'].dt.month
+        # Đảm bảo cột CHI_PHÍ tồn tại (lấy từ compensation)
+        df_db['CHI_PHÍ'] = df_db['compensation'].astype(float)
 
-                if st.button("🔄 Làm mới dữ liệu", use_container_width=True):
-                    st.cache_data.clear()
-                    st.rerun()
+        # ---------- SIDEBAR FILTER ----------
+        with st.sidebar:
+            st.header("⚙️ BỘ LỌC BÁO CÁO")
+            if st.button("🔄 Làm mới dữ liệu", key="refresh_dash"):
+                st.cache_data.clear()
+                st.rerun()
 
-                f_mode = st.radio("Chế độ lọc thời gian", ["Tháng / Năm", "Khoảng ngày"])
+            f_mode = st.radio("Chế độ lọc thời gian", ["Tháng / Năm", "Khoảng ngày"])
 
-                if f_mode == "Tháng / Năm":
-                    y_list = sorted(df_db['NĂM'].unique(), reverse=True)
-                    sel_y = st.selectbox("Năm", y_list)
-
-                    m_list = sorted(df_db[df_db['NĂM'] == sel_y]['THÁNG'].unique())
-                    sel_m = st.selectbox("Tháng", ["Tất cả"] + m_list)
-
-                    df_view = df_db[df_db['NĂM'] == sel_y].copy()
-                    if sel_m != "Tất cả":
-                        df_view = df_view[df_view['THÁNG'] == sel_m]
-                else:
-                    d_range = st.date_input(
-                        "Chọn khoảng ngày",
-                        [
-                            df_db['confirmed_dt'].min().date(),
-                            df_db['confirmed_dt'].max().date()
-                        ]
-                    )
-                    if isinstance(d_range, list) and len(d_range) == 2:
-                        df_view = df_db[
-                            (df_db['confirmed_dt'].dt.date >= d_range[0]) &
-                            (df_db['confirmed_dt'].dt.date <= d_range[1])
-                        ].copy()
-                    else:
-                        df_view = df_db.copy()
-
-                sel_branch = st.multiselect(
-                    "Chi nhánh",
-                    options=sorted(df_db['branch'].unique()),
-                    default=sorted(df_db['branch'].unique())
-                )
-                df_view = df_view[df_view['branch'].isin(sel_branch)]
-
-            # ---------- KPI LAYER ----------
-            st.subheader("🚀 Chỉ số tổng quan")
-
-            if not df_view.empty:
-                k1, k2, k3, k4 = st.columns(4)
-                k1.metric("💰 Tổng chi phí", f"{df_view['CHI_PHÍ'].sum():,.0f} đ")
-                k2.metric("🛠️ Tổng số ca", f"{len(df_view)} ca")
-                k3.metric("🏢 Chi nhánh HOT", df_view['branch'].value_counts().idxmax())
-                k4.metric("⚠️ Máy rủi ro nhất", df_view['machine_code'].value_counts().idxmax())
-
-                st.divider()
-
-                # ---------- TREND ANALYSIS ----------
-                st.subheader("📈 Xu hướng sự cố theo thời gian")
-                trend = (
-                    df_view
-                    .groupby(['NĂM', 'THÁNG'])
-                    .agg(so_ca=('id', 'count'), chi_phi=('CHI_PHÍ', 'sum'))
-                    .reset_index()
-                )
-                fig_trend = px.line(
-                    trend, x='THÁNG', y='so_ca', color='NĂM',
-                    markers=True, title="Số ca theo tháng"
-                )
-                st.plotly_chart(fig_trend, use_container_width=True)
-
-                # ---------- RISK SCORING ----------
-                st.divider()
-                st.subheader("⚠️ Bảng xếp hạng rủi ro thiết bị (Risk Scoring)")
-                today = df_view['confirmed_dt'].max()
-
-                risk_df = (
-                    df_view.groupby('machine_code')
-                    .agg(
-                        so_ca=('id', 'count'),
-                        tong_chi_phi=('CHI_PHÍ', 'sum'),
-                        last_case=('confirmed_dt', 'max'),
-                        branch=('branch', 'first')
-                    )
-                    .reset_index()
-                )
-
-                if not risk_df.empty:
-                    risk_df['freq_score'] = risk_df['so_ca'] / risk_df['so_ca'].max()
-                    risk_df['cost_score'] = risk_df['tong_chi_phi'] / risk_df['tong_chi_phi'].max()
-                    risk_df['recent_score'] = ((today - risk_df['last_case']).dt.days <= 30).astype(int)
-                    risk_df['risk_score'] = (0.5 * risk_df['freq_score'] + 0.4 * risk_df['cost_score'] + 0.1 * risk_df['recent_score']).round(2)
-
-                    def risk_label(v):
-                        if v >= 0.75: return "🔴 Cao"
-                        elif v >= 0.5: return "🟠 Trung bình"
-                        return "🟢 Thấp"
-
-                    risk_df['mức_rủi_ro'] = risk_df['risk_score'].apply(risk_label)
-                    st.dataframe(
-                        risk_df.sort_values('risk_score', ascending=False)[
-                            ['machine_code', 'branch', 'so_ca', 'tong_chi_phi', 'risk_score', 'mức_rủi_ro']
-                        ], use_container_width=True
-                    )
-
-                    heat = risk_df.groupby('branch')['risk_score'].mean().reset_index()
-                    fig_heat = px.bar(heat, x='branch', y='risk_score', title="🔥 Mức rủi ro trung bình theo Chi nhánh")
-                    st.plotly_chart(fig_heat, use_container_width=True)
-
-                # ---------- DRILL DOWN ----------
-                st.divider()
-                st.subheader("🔍 Drill-down chi tiết theo thiết bị")
-                sel_machine = st.selectbox("Chọn máy để xem lịch sử", sorted(df_view['machine_id'].unique()))
-                df_machine = df_view[df_view['machine_id'] == sel_machine]
-                st.dataframe(df_machine.sort_values('confirmed_dt', ascending=False), use_container_width=True)
+            if f_mode == "Tháng / Năm":
+                y_list = sorted(df_db['NĂM'].unique(), reverse=True)
+                sel_y = st.selectbox("Năm", y_list)
+                m_list = sorted(df_db[df_db['NĂM'] == sel_y]['THÁNG'].unique())
+                sel_m = st.selectbox("Tháng", ["Tất cả"] + m_list)
+                
+                df_view = df_db[df_db['NĂM'] == sel_y].copy()
+                if sel_m != "Tất cả":
+                    df_view = df_view[df_view['THÁNG'] == sel_m]
             else:
-                st.warning("Không có dữ liệu phù hợp với bộ lọc.")
+                d_range = st.date_input("Khoảng ngày", [df_db['confirmed_dt'].min(), df_db['confirmed_dt'].max()])
+                if len(d_range) == 2:
+                    df_view = df_db[(df_db['confirmed_dt'].dt.date >= d_range[0]) & 
+                                    (df_db['confirmed_dt'].dt.date <= d_range[1])].copy()
+                else:
+                    df_view = df_db.copy()
+
+            sel_branch = st.multiselect("Chi nhánh", options=sorted(df_db['branch'].unique()), 
+                                        default=sorted(df_db['branch'].unique()))
+            df_view = df_view[df_view['branch'].isin(sel_branch)]
+
+        # ---------- KPI LAYER ----------
+        st.subheader("🚀 Chỉ số tổng quan")
+        if not df_view.empty:
+            k1, k2, k3, k4 = st.columns(4)
+            k1.metric("💰 Tổng chi phí", f"{df_view['CHI_PHÍ'].sum():,.0f} đ")
+            k2.metric("🛠️ Tổng số ca", f"{len(df_view)} ca")
+            k3.metric("🏢 Chi nhánh HOT", df_view['branch'].value_counts().idxmax())
+            # Hiển thị Mã máy rủi ro nhất thay vì UUID
+            k4.metric("⚠️ Máy rủi ro nhất", df_view['machine_code'].value_counts().idxmax())
+
+            st.divider()
+
+            # ---------- TREND ANALYSIS ----------
+            st.subheader("📈 Xu hướng sự cố theo tháng")
+            trend = df_view.groupby(['NĂM', 'THÁNG']).agg(so_ca=('id', 'count'), chi_phi=('CHI_PHÍ', 'sum')).reset_index()
+            # Đảm bảo có thư viện plotly.express as px
+            import plotly.express as px
+            fig_trend = px.line(trend, x='THÁNG', y='so_ca', color='NĂM', markers=True)
+            st.plotly_chart(fig_trend, use_container_width=True)
+
+            # ---------- RISK SCORING ----------
+            st.divider()
+            st.subheader("⚠️ Bảng xếp hạng rủi ro (Risk Scoring)")
+            
+            risk_df = df_view.groupby('machine_code').agg(
+                so_ca=('id', 'count'),
+                tong_chi_phi=('CHI_PHÍ', 'sum'),
+                last_case=('confirmed_dt', 'max'),
+                branch=('branch', 'first')
+            ).reset_index()
+
+            if not risk_df.empty:
+                # Tính điểm rủi ro từ 0-1
+                risk_df['freq_score'] = risk_df['so_ca'] / risk_df['so_ca'].max()
+                risk_df['cost_score'] = risk_df['tong_chi_phi'] / risk_df['tong_chi_phi'].max()
+                
+                def risk_label(v):
+                    if v >= 0.75: return "🔴 Cao"
+                    if v >= 0.5: return "🟠 Trung bình"
+                    return "🟢 Thấp"
+
+                risk_df['risk_score'] = (0.6 * risk_df['freq_score'] + 0.4 * risk_df['cost_score']).round(2)
+                risk_df['Mức rủi ro'] = risk_df['risk_score'].apply(risk_label)
+                
+                st.dataframe(
+                    risk_df.sort_values('risk_score', ascending=False)[
+                        ['machine_code', 'branch', 'so_ca', 'tong_chi_phi', 'risk_score', 'Mức rủi ro']
+                    ], use_container_width=True
+                )
+
+            # ---------- DRILL DOWN (ĐÃ FIX HIỂN THỊ MACHINE_CODE) ----------
+            st.divider()
+            st.subheader("🔍 Drill-down chi tiết theo thiết bị")
+            
+            # 1. Lấy danh sách mã máy duy nhất từ dữ liệu đang hiển thị
+            available_codes = sorted(df_view['machine_code'].unique())
+            
+            # 2. Selectbox hiển thị Mã máy (1641, M001...)
+            sel_machine_code = st.selectbox("Chọn mã máy để xem lịch sử", available_codes)
+            
+            # 3. Lọc theo mã máy đã chọn
+            df_machine = df_view[df_view['machine_code'] == sel_machine_code]
+            
+            # 4. Hiển thị bảng chi tiết
+            st.dataframe(
+                df_machine.sort_values('confirmed_dt', ascending=False)[
+                    ['confirmed_date', 'customer_name', 'issue_reason', 'compensation', 'note']
+                ], 
+                use_container_width=True
+            )
+        else:
+            st.warning("Không có dữ liệu phù hợp với bộ lọc.")
 
     # --- TAB 2: QUẢN TRỊ HỆ THỐNG ---
     with tab_admin:
