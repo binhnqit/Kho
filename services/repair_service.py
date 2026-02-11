@@ -13,26 +13,17 @@ STATUS_OPTIONS = [
 ]
 
 def get_repair_data():
-    """
-    Lấy dữ liệu từ bảng repair_cases, mapping với bảng machines để lấy machine_code 
-    và tiền xử lý các cột thời gian, chi phí.
-    """
     try:
-        # 1. Lấy dữ liệu sửa chữa
         res_repair = supabase.table("repair_cases").select("*").order("created_at", desc=True).execute()
         df_repair = pd.DataFrame(res_repair.data)
 
-        # 2. Lấy danh mục máy để mapping machine_code
-        res_machines = supabase.table("machines").select("id, machine_code").execute()
-        df_machines = pd.DataFrame(res_machines.data)
-
+        # PHẦN QUAN TRỌNG: Nếu bảng trống, phải trả về đúng danh sách cột
         if df_repair.empty:
-            # Trả về khung DataFrame rỗng với đầy đủ các cột cần thiết để không lỗi Dashboard
             return pd.DataFrame(columns=[
-                'machine_display', 'NĂM', 'THÁNG', 'CHI_PHÍ', 'branch', 
-                'status', 'origin_branch', 'receiver_name', 'returner_name'
+                'id', 'machine_id', 'machine_display', 'status', 
+                'branch', 'origin_branch', 'CHI_PHÍ', 'NĂM', 'THÁNG'
             ])
-
+        
         # 3. MAPPING: Đổi UUID máy thành Machine Code dễ đọc
         df = df_repair.merge(
             df_machines, 
