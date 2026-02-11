@@ -36,8 +36,8 @@ def main():
 
 # ... các with tab khác ...
 
-with tab_kpi:
-    render_kpi_dashboard(df_db) # Gọi hàm từ file kpi.py
+    with tab_kpi:
+        render_kpi_dashboard(df_db) # Gọi hàm từ file kpi.py
 
     with tab_dash:
         render_dashboard(df_db)
