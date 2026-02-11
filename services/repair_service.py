@@ -6,21 +6,30 @@ def get_repair_data():
     res = supabase.table("repair_cases").select("*, machines(machine_code)").execute()
     
     if not res.data:
-        return pd.DataFrame()
+        # Nếu không có dữ liệu, trả về DF trống với các cột mặc định để tránh lỗi KeyError
+        return pd.DataFrame(columns=['NĂM', 'THÁNG', 'machine_display', 'CHI_PHÍ', 'CHI_NHÁNH'])
 
     df = pd.DataFrame(res.data)
     
-    # --- BỔ SUNG ĐOẠN NÀY ---
-    # 1. Chuyển đổi cột ngày nhận máy sang định dạng datetime
+    # 1. Chuyển đổi sang định dạng datetime
     if 'received_date' in df.columns:
         df['received_date'] = pd.to_datetime(df['received_date'])
-        # 2. Tạo cột 'NĂM' để dashboard.py không bị lỗi KeyError
+        
+        # 2. Trích xuất NĂM và THÁNG (Đây là phần giải quyết KeyError)
         df['NĂM'] = df['received_date'].dt.year
-    # ------------------------
+        df['THÁNG'] = df['received_date'].dt.month
+    else:
+        # Trường hợp DB lỗi không có cột received_date, tạo cột giả để app không sập
+        df['NĂM'] = None
+        df['THÁNG'] = None
 
+    # 3. Xử lý hiển thị mã máy
     if 'machines' in df.columns:
-        df['machine_display'] = df['machines'].apply(lambda x: x['machine_code'] if isinstance(x, dict) else "N/A")
+        df['machine_display'] = df['machines'].apply(
+            lambda x: x['machine_code'] if isinstance(x, dict) and x else "N/A"
+        )
     
+    # 4. Đổi tên cột cho thân thiện
     df = df.rename(columns={
         'compensation': 'CHI_PHÍ',
         'branch': 'CHI_NHÁNH'
