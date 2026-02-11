@@ -11,6 +11,7 @@ st.set_page_config(
 import pandas as pd
 import plotly.express as px
 from tabs.kpi import render_kpi_dashboard # Thêm dòng này
+from tabs.alerts import render_alerts
 from tabs.ai_intelligence import render_ai_intelligence
 from services.repair_service import get_repair_data
 from tabs.dashboard import render_dashboard
@@ -51,8 +52,7 @@ def main():
         render_admin_panel(df_db)
 
     with tab_alert:
-        st.header("🚨 Cảnh báo rủi ro")
-        st.info("Tính năng đang phát triển.")
+        render_alerts(df_db)
 
 if __name__ == "__main__":
     main()
