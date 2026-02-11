@@ -14,9 +14,9 @@ def render_dashboard(df):
         st.header("⚙️ BỘ LỌC BÁO CÁO")
         
         # Nút làm mới nhanh
-        if st.button("🔄 Làm mới dữ liệu", use_container_width=True):
-            st.cache_data.clear()
-            st.rerun()
+        #if st.button("🔄 Làm mới dữ liệu", use_container_width=True):
+            #st.cache_data.clear()
+            #st.rerun()
 
         f_mode = st.radio("Chế độ lọc thời gian", ["Tháng / Năm", "Khoảng ngày"])
 
