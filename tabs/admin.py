@@ -1,5 +1,6 @@
 import streamlit as st
 import pandas as pd
+import plotly.express as px
 from datetime import datetime
 from core.database import supabase
 from services.repair_service import insert_new_repair
