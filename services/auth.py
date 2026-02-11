@@ -74,8 +74,8 @@ def registration_form():
                             "username": new_user,
                             "full_name": new_name,
                             "password": hash_password(new_pass),
-                            "role": role,
-                            "created_at": datetime.now().isoformat()
+                            "role": role
+                            # Không cần created_at vì DB tự sinh
                         }
                         supabase.table("users").insert(user_data).execute()
                         st.success("Tạo tài khoản thành công! Mời bạn đăng nhập.")
