@@ -14,50 +14,52 @@ STATUS_OPTIONS = [
 
 def get_repair_data():
     """
-    Lấy dữ liệu từ bảng repair_cases, mapping với bảng machines để lấy machine_code 
-    và tiền xử lý các cột thời gian, chi phí.
+    Lấy dữ liệu từ bảng repair_cases, mapping với bảng machines.
+    Đảm bảo cột 'id' của ca sửa chữa luôn tồn tại để đối soát.
     """
     try:
         # 1. Lấy dữ liệu sửa chữa
         res_repair = supabase.table("repair_cases").select("*").order("created_at", desc=True).execute()
         df_repair = pd.DataFrame(res_repair.data)
 
-        # 2. Lấy danh mục máy để mapping machine_code
+        # 2. Lấy danh mục máy để mapping
         res_machines = supabase.table("machines").select("id, machine_code").execute()
         df_machines = pd.DataFrame(res_machines.data)
 
+        # XỬ LÝ KHI DỮ LIỆU TRỐNG: Trả về DF có sẵn cấu trúc cột để tránh lỗi KeyError: 'id'
         if df_repair.empty:
-            # Trả về khung DataFrame rỗng với đầy đủ các cột cần thiết để không lỗi Dashboard
             return pd.DataFrame(columns=[
-                'machine_display', 'NĂM', 'THÁNG', 'CHI_PHÍ', 'branch', 
-                'status', 'origin_branch', 'receiver_name', 'returner_name'
+                'id', 'machine_id', 'machine_display', 'NĂM', 'THÁNG', 
+                'CHI_PHÍ', 'branch', 'status', 'origin_branch', 
+                'receiver_name', 'returner_name', 'confirmed_dt'
             ])
 
-        # 3. MAPPING: Đổi UUID máy thành Machine Code dễ đọc
+        # 3. MAPPING & BẢO VỆ CỘT ID
+        # Chúng ta dùng suffixes để tránh việc cột id của repair_cases bị đổi tên thành id_x
         df = df_repair.merge(
             df_machines, 
             left_on='machine_id', 
             right_on='id', 
             how='left', 
-            suffixes=('', '_m')
+            suffixes=('', '_machine') 
         )
 
-        # 4. TẠO CỘT HIỂN THỊ CHUẨN (Apple Style - Sạch sẽ)
+        # 4. TẠO CỘT HIỂN THỊ
         df['machine_display'] = df['machine_code'].fillna('N/A')
 
-        # 5. XỬ LÝ THỜI GIAN & CHI PHÍ
-        # Ưu tiên lấy ngày xác nhận, nếu không có lấy ngày tạo
+        # 5. XỬ LÝ THỜI GIAN
         df['confirmed_dt'] = pd.to_datetime(df['confirmed_date'], errors='coerce')
         df['confirmed_dt'] = df['confirmed_dt'].fillna(pd.to_datetime(df['created_at'], errors='coerce'))
         
-        # Loại bỏ các dòng không có ngày tháng hợp lệ để tránh lỗi trích xuất
+        # Chỉ giữ lại các dòng có thời gian hợp lệ
         df = df.dropna(subset=['confirmed_dt'])
 
-        # Trích xuất Năm/Tháng để lọc báo cáo
+        # Trích xuất Năm/Tháng
         df['NĂM'] = df['confirmed_dt'].dt.year.astype(int)
         df['THÁNG'] = df['confirmed_dt'].dt.month.astype(int)
         
-        # Chuyển đổi chi phí bồi thường/sửa chữa về dạng số
+        # 6. CHI PHÍ
+        # compensation có thể là None hoặc chuỗi, chuyển về numeric an toàn
         df['CHI_PHÍ'] = pd.to_numeric(df.get('compensation', 0), errors='coerce').fillna(0)
 
         return df
@@ -66,52 +68,47 @@ def get_repair_data():
         return pd.DataFrame()
 
 def insert_new_repair(data_dict):
-    """
-    Thêm một ca sửa chữa mới vào hệ thống.
-    """
+    """ Thêm mới ca sửa chữa """
     try:
-        # Loại bỏ các trường kỹ thuật không thuộc Schema bảng
-        keys_to_remove = ['created_by', 'machine_display']
+        # Làm sạch dữ liệu trước khi gửi lên Supabase
+        clean_data = data_dict.copy()
+        keys_to_remove = ['machine_display', 'confirmed_dt', 'NĂM', 'THÁNG', 'CHI_PHÍ']
         for key in keys_to_remove:
-            if key in data_dict:
-                data_dict.pop(key)
+            clean_data.pop(key, None)
         
-        # Gán trạng thái mặc định khi khởi tạo
-        if 'status' not in data_dict:
-            data_dict['status'] = "1. Chờ nhận"
+        if 'status' not in clean_data:
+            clean_data['status'] = "1. Chờ nhận"
             
-        response = supabase.table("repair_cases").insert(data_dict).execute()
-        
-        # Xóa cache để các Tab khác cập nhật ngay lập tức
+        response = supabase.table("repair_cases").insert(clean_data).execute()
         st.cache_data.clear()
         return response
     except Exception as e:
-        st.error(f"❌ Không thể lưu dữ liệu: {str(e)}")
+        st.error(f"❌ Lỗi lưu dữ liệu: {str(e)}")
         return None
 
 def update_repair_tracking(case_id, new_status, staff_name, note=""):
-    """
-    Cập nhật trạng thái vận hành và đối soát nhân viên thực hiện (Receiver/Returner).
-    """
+    """ Cập nhật trạng thái và nhân viên đối soát """
+    if not case_id:
+        st.error("❌ Không tìm thấy ID của ca sửa chữa để cập nhật!")
+        return None
+
     update_data = {
         "status": new_status,
         "note": note,
         "updated_at": "now()"
     }
     
-    # --- LOGIC ĐỐI SOÁT NGHIỆP VỤ ---
-    if "Đã nhận" in new_status:
+    # Logic xác nhận theo từ khóa trạng thái
+    if "Đã nhận" in new_status or "2." in new_status:
         update_data["receiver_name"] = staff_name
-        update_data["received_date"] = "now()"
+        update_data["received_at_warehouse"] = "now()" # Khớp với cột trong SQL mới của bạn
         
-    elif "Đã trả" in new_status:
+    elif "Đã trả" in new_status or "6." in new_status:
         update_data["returner_name"] = staff_name
-        update_data["returned_date"] = "now()"
+        update_data["returned_at_branch"] = "now()" # Khớp với cột trong SQL mới của bạn
 
     try:
         response = supabase.table("repair_cases").update(update_data).eq("id", case_id).execute()
-        
-        # Làm mới dữ liệu toàn cục
         st.cache_data.clear()
         return response
     except Exception as e:
