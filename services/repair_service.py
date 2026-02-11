@@ -2,6 +2,36 @@ import pandas as pd
 import streamlit as st
 from core.database import supabase
 
+# Thêm các trạng thái chuẩn vào biến hằng số
+STATUS_OPTIONS = [
+    "Chờ nhận", "Đã nhận kho tổng", "Đang sửa nội bộ", 
+    "Gửi nhà cung cấp", "Đã sửa xong", "Đã trả chi nhánh"
+]
+
+def update_repair_status(case_id, new_status, staff_name, note=None):
+    """
+    Cập nhật trạng thái máy kèm nhân viên xác nhận để đối soát
+    """
+    update_data = {
+        "current_status": new_status,
+        "note": note
+    }
+    
+    # Logic xác nhận theo từng công đoạn
+    if new_status == "Đã nhận kho tổng":
+        update_data["staff_receiver"] = staff_name
+        update_data["received_at"] = "now()"
+    elif new_status == "Đã trả chi nhánh":
+        update_data["staff_returner"] = staff_name
+        update_data["returned_at"] = "now()"
+        
+    try:
+        res = supabase.table("repair_cases").update(update_data).eq("id", case_id).execute()
+        st.cache_data.clear()
+        return res
+    except Exception as e:
+        st.error(f"Lỗi cập nhật đối soát: {e}")
+        return None
 def get_repair_data():
     try:
         # 1. Lấy dữ liệu sửa chữa
