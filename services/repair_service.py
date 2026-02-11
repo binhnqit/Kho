@@ -3,24 +3,24 @@ import streamlit as st
 from core.database import supabase
 
 def get_repair_data():
-    # Sử dụng .select("*, machines(machine_code)") để lấy thông tin từ cả 2 bảng
-    res = supabase.table("repair_cases").select("""
-        *,
-        machines (
-            machine_code
-        )
-    """).execute()
+    res = supabase.table("repair_cases").select("*, machines(machine_code)").execute()
     
     if not res.data:
         return pd.DataFrame()
 
     df = pd.DataFrame(res.data)
     
-    # Làm phẳng dữ liệu (Flatten) để cột machine_code nằm ngoài cùng cho dễ dùng
+    # --- BỔ SUNG ĐOẠN NÀY ---
+    # 1. Chuyển đổi cột ngày nhận máy sang định dạng datetime
+    if 'received_date' in df.columns:
+        df['received_date'] = pd.to_datetime(df['received_date'])
+        # 2. Tạo cột 'NĂM' để dashboard.py không bị lỗi KeyError
+        df['NĂM'] = df['received_date'].dt.year
+    # ------------------------
+
     if 'machines' in df.columns:
         df['machine_display'] = df['machines'].apply(lambda x: x['machine_code'] if isinstance(x, dict) else "N/A")
     
-    # Đổi tên cột hiển thị cho thân thiện (Tùy chọn)
     df = df.rename(columns={
         'compensation': 'CHI_PHÍ',
         'branch': 'CHI_NHÁNH'
