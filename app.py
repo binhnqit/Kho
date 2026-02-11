@@ -9,6 +9,7 @@ st.set_page_config(
 
 # Sau đó mới import các module nội bộ
 import pandas as pd
+import plotly.express as px
 from services.repair_service import get_repair_data
 from tabs.dashboard import render_dashboard
 from tabs.admin import render_admin_panel
