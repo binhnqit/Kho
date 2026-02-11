@@ -72,39 +72,45 @@ def login_form():
 @st.cache_data(ttl=30)
 def load_repair_data_final():
     try:
-        # Lấy dữ liệu 2 bảng
         res_repair = supabase.table("repair_cases").select("*").order("created_at", desc=True).execute()
         res_machines = supabase.table("machines").select("id, machine_code").execute()
         
-        if not res_repair.data: return pd.DataFrame()
+        # Tạo danh sách các cột bắt buộc phải có để Dashboard không bị sập
+        required_cols = ['branch', 'compensation', 'machine_id', 'machine_code', 'confirmed_date', 'id']
+        
+        if not res_repair.data: 
+            return pd.DataFrame(columns=required_cols + ['NĂM', 'THÁNG', 'CHI_PHÍ'])
         
         df_repair = pd.DataFrame(res_repair.data)
         df_m = pd.DataFrame(res_machines.data)
 
+        # Đảm bảo các cột tối thiểu tồn tại trong df_repair trước khi xử lý
+        for col in required_cols:
+            if col not in df_repair.columns:
+                df_repair[col] = None
+
         # Merge lấy machine_code
-        if not df_m.empty and 'machine_id' in df_repair.columns:
+        if not df_m.empty:
             df_repair['machine_id'] = df_repair['machine_id'].astype(str)
             df_m['id'] = df_m['id'].astype(str)
             df = pd.merge(df_repair, df_m[['id', 'machine_code']], left_on='machine_id', right_on='id', how='left')
-            df['machine_id'] = df['machine_code'].fillna(df['machine_id'])
-            if 'id_x' in df.columns: df['id'] = df['id_x'] # Bảo vệ cột id gốc
+            # Ưu tiên lấy machine_code, nếu không có thì giữ lại machine_id (UUID)
+            df['machine_display'] = df['machine_code'].fillna(df['machine_id'])
         else:
             df = df_repair
+            df['machine_display'] = df['machine_id']
 
-        # Xử lý ngày tháng linh hoạt (Cứu dòng trống confirmed_date)
+        # Xử lý ngày tháng
         df['created_dt'] = pd.to_datetime(df['created_at'], errors='coerce')
         df['confirmed_dt_raw'] = pd.to_datetime(df['confirmed_date'], errors='coerce')
         df['confirmed_dt'] = df['confirmed_dt_raw'].fillna(df['created_dt'])
         
+        # Loại bỏ dòng không có ngày (để tránh lỗi dt.year)
         df = df.dropna(subset=['confirmed_dt'])
 
         df['NĂM'] = df['confirmed_dt'].dt.year.astype(int)
         df['THÁNG'] = df['confirmed_dt'].dt.month.astype(int)
         
-        day_map = {'Monday': 'Thứ 2', 'Tuesday': 'Thứ 3', 'Wednesday': 'Thứ 4',
-                   'Thursday': 'Thứ 5', 'Friday': 'Thứ 6', 'Saturday': 'Thứ 7', 'Sunday': 'Chủ Nhật'}
-        df['THỨ'] = df['confirmed_dt'].dt.day_name().map(day_map)
-
         # Ép kiểu chi phí an toàn
         df['CHI_PHÍ'] = pd.to_numeric(df['compensation'], errors='coerce').fillna(0)
         
