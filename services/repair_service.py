@@ -44,5 +44,19 @@ def get_repair_data():
         return pd.DataFrame()
 
 def insert_new_repair(data_dict):
-    """Hàm chèn dữ liệu mới dùng cho Tab Admin"""
-    return supabase.table("repair_cases").insert(data_dict).execute()
+    """
+    Data_dict truyền vào cần khớp với các cột:
+    machine_id, branch, customer_name, received_date, 
+    issue_reason, confirmed_date, note, is_unrepairable, compensation
+    """
+    try:
+        # Loại bỏ 'created_by' nếu có trong data_dict vì DB không có cột này
+        if 'created_by' in data_dict:
+            data_dict.pop('created_by')
+            
+        # Thực hiện insert vào Supabase
+        response = supabase.table("repair_cases").insert(data_dict).execute()
+        return response
+    except Exception as e:
+        st.error(f"❌ Lỗi Insert: {str(e)}")
+        return None
