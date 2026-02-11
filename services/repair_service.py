@@ -3,44 +3,23 @@ import streamlit as st
 from core.database import supabase
 
 def get_repair_data():
-    try:
-        res = supabase.table("repair_cases").select("*, machines(machine_code)").execute()
+    # ... logic lấy dữ liệu từ Supabase ...
+    res = supabase.table("repair_cases").select("*").execute()
+    df = pd.DataFrame(res.data)
+    
+    # DANH SÁCH CỘT BẮT BUỘC PHẢI CÓ
+    required_columns = ['branch', 'machine_display', 'confirmed_dt', 'CHI_PHÍ', 'NĂM', 'THÁNG']
+    
+    if df.empty:
+        # Tạo dataframe rỗng nhưng có đầy đủ tên cột để các hàm sau không bị lỗi KeyError
+        return pd.DataFrame(columns=required_columns)
+    
+    # Đảm bảo cột branch tồn tại (đề phòng trường hợp trong DB đặt tên khác)
+    if 'branch' not in df.columns:
+        # Nếu DB đặt tên là 'chi_nhanh' thì rename, nếu không có thì tạo cột giả
+        df['branch'] = "Chưa xác định"
         
-        # Nếu không có dữ liệu hoặc lỗi, trả về DataFrame trống có sẵn các cột cần thiết
-        if not res.data:
-            return pd.DataFrame(columns=['NĂM', 'THÁNG', 'CHI_NHÁNH', 'CHI_PHÍ', 'machine_display'])
-
-        df = pd.DataFrame(res.data)
-        
-        # 1. Xử lý thời gian
-        if 'received_date' in df.columns:
-            df['received_date'] = pd.to_datetime(df['received_date'])
-            df['NĂM'] = df['received_date'].dt.year
-            df['THÁNG'] = df['received_date'].dt.month
-        
-        # 2. Xử lý mã máy
-        if 'machines' in df.columns:
-            df['machine_display'] = df['machines'].apply(
-                lambda x: x['machine_code'] if isinstance(x, dict) and x else "N/A"
-            )
-
-        # 3. Đổi tên cột (Lưu ý: Sau bước này, 'branch' trở thành 'CHI_NHÁNH')
-        df = df.rename(columns={
-            'compensation': 'CHI_PHÍ',
-            'branch': 'CHI_NHÁNH'
-        })
-        
-        # Đảm bảo các cột cần thiết luôn tồn tại để tránh KeyError
-        required_cols = ['NĂM', 'THÁNG', 'CHI_NHÁNH', 'CHI_PHÍ', 'machine_display']
-        for col in required_cols:
-            if col not in df.columns:
-                df[col] = None
-
-        return df
-        
-    except Exception as e:
-        st.error(f"Lỗi lấy dữ liệu: {e}")
-        return pd.DataFrame(columns=['NĂM', 'THÁNG', 'CHI_NHÁNH', 'CHI_PHÍ', 'machine_display'])
+    return df
 
 def insert_new_repair(data_dict):
     """
