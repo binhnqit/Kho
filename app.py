@@ -32,7 +32,7 @@ def main():
         "📊 BÁO CÁO VẬN HÀNH", 
         "📥 QUẢN TRỊ VÀ NHẬP LIỆU", 
         "🎯 KPI HIỆU SUẤT", 
-        "🧠 AI",
+        "🧠 AI INSIGHTS",
         "🚨 CẢNH BÁO RỦI RO"
     ])
 
