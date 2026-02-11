@@ -11,10 +11,16 @@ def render_dashboard(df):
     st.title("📊 BÁO CÁO VẬN HÀNH – DECISION DASHBOARD")
 
     # 2. ---------- SIDEBAR FILTER ----------
+    # 2. ---------- SIDEBAR FILTER ----------
     with st.sidebar:
         st.header("⚙️ BỘ LỌC BÁO CÁO")
         
-        # Chế độ lọc thời gian
+        # Kiểm tra xem cột NĂM có tồn tại không
+        if 'NĂM' not in df.columns:
+            st.error("❌ Dữ liệu lỗi: Thiếu cột 'NĂM'. Vui lòng kiểm tra lại hàm xử lý dữ liệu.")
+            return # Thoát hàm sớm để không chạy dòng 22 gây lỗi sập app
+
+        # ... (các phần code còn lại giữ nguyên)
         f_mode = st.radio("Chế độ lọc thời gian", ["Tháng / Năm", "Khoảng ngày"])
 
         if f_mode == "Tháng / Năm":
