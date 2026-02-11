@@ -45,7 +45,14 @@ def render_dashboard(df):
                 df_view = df.copy()
 
         # Bộ lọc chi nhánh
-        all_branches = sorted(df['branch'].unique())
+        # Lấy danh sách chi nhánh, loại bỏ giá trị rỗng và chuyển về string để sorted không lỗi
+        available_branches = sorted([str(x) for x in df_db['branch'].dropna().unique()])
+
+        sel_branch = st.multiselect(
+        "Chi nhánh",
+        options=available_branches,
+        default=available_branches
+        )
         sel_branch = st.multiselect("Chi nhánh", options=all_branches, default=all_branches)
         df_view = df_view[df_view['branch'].isin(sel_branch)]
 
