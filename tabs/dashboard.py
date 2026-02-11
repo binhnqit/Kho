@@ -43,9 +43,17 @@ def render_dashboard(df):
 
         # --- BỘ LỌC CHI NHÁNH (Sửa lỗi KeyError và lọc sạch dữ liệu) ---
         # Sử dụng 'df' thay vì 'df_db'
-        available_branches = sorted([str(x) for x in df['branch'].dropna().unique()])
+        # Kiểm tra sự tồn tại của cột 'branch' để tránh KeyError
+        if 'branch' in df.columns:
+            available_branches = sorted([str(x) for x in df['branch'].dropna().unique()])
+        else:
+            st.error("❌ Không tìm thấy cột 'branch' trong dữ liệu. Vui lòng kiểm tra bảng 'repair_cases' trên Supabase.")
+            available_branches = []
 
-        sel_branch = st.multiselect(
+        if not available_branches:
+            st.warning("⚠️ Không có dữ liệu chi nhánh để hiển thị.")
+            return # Dừng render nếu không có cột quan trọng
+            sel_branch = st.multiselect(
             "Chi nhánh",
             options=available_branches,
             default=available_branches
