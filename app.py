@@ -35,7 +35,7 @@ def main():
         render_dashboard(df_db)
 
     with tab_admin:
-    render_admin_panel(df_db)
+        render_admin_panel(df_db)
 
     with tab_alert:
         st.header("🚨 Cảnh báo rủi ro")
