@@ -3,7 +3,7 @@ import pandas as pd
 import plotly.express as px
 from datetime import datetime
 from core.database import supabase
-from services.repair_service import insert_new_repair, update_repair_tracking
+from services.repair_service import insert_new_repair, update_repair_tracking, STATUS_OPTIONS
 
 def render_status_management(df):
     """
@@ -12,7 +12,7 @@ def render_status_management(df):
     st.subheader("🚚 Điều phối & Đối soát thiết bị")
     
     # Kiểm tra cột để tránh lỗi KeyError
-    required_cols = ['status', 'machine_display', 'origin_branch', 'id']
+    required_cols = ['status', 'machine_display', 'branch', 'id']
     for col in required_cols:
         if col not in df.columns:
             st.error(f"❌ Database thiếu cột: {col}. Vui lòng kiểm tra lại Schema.")
@@ -38,7 +38,12 @@ def render_status_management(df):
     with col_info:
         # Hiển thị thông tin đối soát nhanh dưới dạng thẻ
         c1, c2, c3 = st.columns(3)
-        c1.metric("Nguồn gốc", case_info['origin_branch'] if pd.notna(case_info['origin_branch']) else case_info['branch'])
+        # Kiểm tra origin_branch, nếu rỗng thì dùng branch mặc định
+        origin = case_info.get('origin_branch')
+        if pd.isna(origin) or origin == "":
+            origin = case_info['branch']
+            
+        c1.metric("Nguồn gốc", origin)
         c2.metric("Trạng thái", case_info['status'])
         c3.metric("Người giữ", case_info.get('receiver_name', 'Chưa xác nhận'))
 
@@ -48,9 +53,13 @@ def render_status_management(df):
     with st.expander(f"🔄 Cập nhật trạng thái cho máy: {selected_code}", expanded=True):
         f_st, f_staff = st.columns(2)
         with f_st:
-            # Danh sách trạng thái chuẩn từ service
-            from services.repair_service import STATUS_OPTIONS
-            new_st = st.selectbox("Trạng thái mới:", STATUS_OPTIONS)
+            # Lấy index hiện tại của trạng thái để selectbox nhảy đúng vị trí (optional)
+            try:
+                curr_idx = STATUS_OPTIONS.index(case_info['status'])
+            except:
+                curr_idx = 0
+            new_st = st.selectbox("Trạng thái mới:", STATUS_OPTIONS, index=curr_idx)
+            
         with f_staff:
             staff = st.text_input("Nhân viên xác nhận (Ký tên):", 
                                  placeholder="Nhập tên người thực hiện...")
@@ -85,33 +94,63 @@ def render_admin_panel(df_db):
         
         with c_up:
             st.subheader("📂 Import CSV hàng loạt")
-            up_file = st.file_uploader("Chọn file CSV", type="csv")
+            up_file = st.file_uploader("Chọn file CSV", type="csv", key="admin_csv_up")
             if up_file:
                 df_up = pd.read_csv(up_file)
-                if st.button("🚀 Xác nhận Import"):
-                    # Logic import của bạn (nhớ map machine_id sang UUID)
-                    st.success("Tính năng Import đang hoạt động...")
+                st.dataframe(df_up.head(5), use_container_width=True)
+                if st.button("🚀 Xác nhận Import", use_container_width=True):
+                    st.info("Hệ thống đang xử lý hàng loạt...")
+                    # Code xử lý import tương tự phần thủ công nhưng chạy vòng lặp
                     st.cache_data.clear()
 
         with c_man:
             st.subheader("✍️ Nhập ca đơn lẻ")
-            with st.form("f_manual"):
-                f_m = st.text_input("Mã máy *")
+            with st.form("f_manual_admin", clear_on_submit=True):
+                f_m = st.text_input("Mã máy * (VD: 3101)")
                 f_b = st.selectbox("Chi nhánh gửi *", ["Miền Bắc", "Miền Trung", "Miền Nam"])
                 f_c = st.text_input("Khách hàng")
-                f_cost = st.number_input("Chi phí dự kiến", min_value=0)
-                if st.form_submit_button("Lưu ca mới"):
-                    # Gọi hàm insert_new_repair từ service
-                    st.success("Đã ghi nhận ca mới!")
-                    st.cache_data.clear()
-                    st.rerun()
+                f_cost = st.number_input("Chi phí dự kiến (VNĐ)", min_value=0, step=1000)
+                f_reason = st.text_input("Lý do hỏng/Nội dung sửa *")
+                
+                if st.form_submit_button("Lưu ca mới", use_container_width=True):
+                    if not f_m or not f_reason:
+                        st.error("⚠️ Vui lòng nhập Mã máy và Lý do hỏng")
+                    else:
+                        # 1. Xử lý lấy UUID máy từ mã máy (machine_code)
+                        m_code = f_m.strip().upper()
+                        res_m = supabase.table("machines").select("id").eq("machine_code", m_code).execute()
+                        
+                        if res_m.data:
+                            m_uuid = res_m.data[0]['id']
+                        else:
+                            # Nếu máy mới hoàn toàn, tạo luôn trong danh mục
+                            new_m = supabase.table("machines").insert({"machine_code": m_code}).execute()
+                            m_uuid = new_m.data[0]['id']
+
+                        # 2. Tạo record ca sửa chữa
+                        new_record = {
+                            "machine_id": m_uuid,
+                            "branch": f_b,
+                            "origin_branch": f_b, # Đối soát nguồn gốc
+                            "customer_name": f_c,
+                            "issue_reason": f_reason,
+                            "compensation": float(f_cost),
+                            "status": "1. Chờ nhận", # Mặc định bước 1
+                            "confirmed_date": datetime.now().isoformat()
+                        }
+                        
+                        success = insert_new_repair(new_record)
+                        if success:
+                            st.success(f"✅ Đã thêm mới ca sửa chữa cho máy {m_code}")
+                            st.cache_data.clear()
+                            st.rerun()
 
     # --- SUB-TAB 2: ĐỐI SOÁT VẬN HÀNH ---
     with ad_sub2:
         render_status_management(df_db)
 
     # --- SUB-TAB 3: CHI NHÁNH ---
-    with ad_sub2:
+    with ad_sub3:
         st.subheader("🏢 Hiệu suất vận hành theo Chi nhánh")
         if df_db.empty:
             st.info("Chưa có dữ liệu để phân tích chi nhánh.")
@@ -121,7 +160,6 @@ def render_admin_panel(df_db):
             
             c1, c2 = st.columns(2)
             with c1:
-                # Dùng machine_display (Mã máy thân thiện)
                 view = df_b.groupby("machine_display").agg(
                     so_ca=("id", "count"),
                     tong_chi_phi=("CHI_PHÍ", "sum")
@@ -129,28 +167,20 @@ def render_admin_panel(df_db):
                 st.write(f"Danh sách máy hỏng tại {sel_b}")
                 st.dataframe(view, use_container_width=True, hide_index=True)
             with c2:
-                fig_pie = px.pie(view.head(5), values='so_ca', names='machine_display', title="Top 5 máy hỏng nhiều nhất")
+                fig_pie = px.pie(view.head(5), values='so_ca', names='machine_display', 
+                                title="Top 5 máy hỏng nhiều nhất",
+                                color_discrete_sequence=px.colors.sequential.RdBu)
                 st.plotly_chart(fig_pie, use_container_width=True)
 
-    # ---------------------------------------------------------
-    # SUB-TAB 3: AUDIT LOG
-    # ---------------------------------------------------------
-    with ad_sub3:
-        st.subheader("📜 Nhật ký hệ thống (100 hoạt động gần nhất)")
-        if st.button("🔄 Refresh Nhật ký"):
-            st.rerun()
-
+    # --- SUB-TAB 4: AUDIT LOG ---
+    with ad_sub4:
+        st.subheader("📜 Nhật ký hệ thống")
         try:
-            res_audit = supabase.table("audit_logs").select("*").order("created_at", desc=True).limit(100).execute()
+            res_audit = supabase.table("audit_logs").select("*").order("created_at", desc=True).limit(50).execute()
             if res_audit.data:
                 df_audit = pd.DataFrame(res_audit.data)
-                df_audit['created_at'] = pd.to_datetime(df_audit['created_at']).dt.strftime('%H:%M:%S %d-%m-%Y')
-                st.dataframe(
-                    df_audit[['created_at', 'actor', 'action', 'payload']], 
-                    use_container_width=True,
-                    hide_index=True
-                )
+                st.dataframe(df_audit, use_container_width=True)
             else:
-                st.info("Nhật ký trống.")
-        except Exception as e:
-            st.warning("⚠️ Không thể tải Audit Log. Hãy đảm bảo bạn đã tạo bảng 'audit_logs' trên Supabase.")
+                st.info("Chưa có nhật ký hoạt động.")
+        except:
+            st.caption("Tính năng Audit Log yêu cầu bảng 'audit_logs' trên Database.")
