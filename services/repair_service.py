@@ -2,6 +2,32 @@ import pandas as pd
 import streamlit as st
 from core.database import supabase
 
+def update_tracking_status(case_id, new_status, staff_name, note=""):
+    """
+    Cập nhật trạng thái và ghi nhận nhân viên thực hiện để đối soát.
+    """
+    # Định nghĩa luồng trạng thái
+    update_data = {
+        "status": new_status,
+        "note": note,
+        "updated_at": "now()"
+    }
+    
+    # Logic đối soát từng bước
+    if new_status == "1. Nhận Kho":
+        update_data["receiver_name"] = staff_name
+    elif new_status == "5. Đã trả":
+        # Bước quan trọng nhất: Ghi đè ngày trả và người trả
+        update_data["returner_name"] = staff_name
+        update_data["returned_date"] = "now()"
+
+    try:
+        response = supabase.table("repair_cases").update(update_data).eq("id", case_id).execute()
+        st.cache_data.clear() # Làm mới dữ liệu báo cáo ngay lập tức
+        return response
+    except Exception as e:
+        st.error(f"Lỗi đối soát: {str(e)}")
+        return None
 # Thêm các trạng thái chuẩn vào biến hằng số
 STATUS_OPTIONS = [
     "Chờ nhận", "Đã nhận kho tổng", "Đang sửa nội bộ", 
