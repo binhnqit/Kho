@@ -3,57 +3,43 @@ import streamlit as st
 from core.database import supabase
 
 def get_repair_data():
-    """
-    Lấy dữ liệu từ Supabase và tiền xử lý các cột NĂM, THÁNG, CHI_PHÍ.
-    Đảm bảo không bao giờ trả về DataFrame thiếu cột để tránh lỗi Dashboard.
-    """
-    # Danh sách cột bắt buộc phải có để Dashboard không bị crash
-    required_columns = ['confirmed_dt', 'NĂM', 'THÁNG', 'CHI_PHÍ', 'branch', 'machine_display', 'id']
-    
     try:
-        # 1. Thực hiện truy vấn dữ liệu
-        res = supabase.table("repair_cases").select("*").order("confirmed_date", desc=True).execute()
-        
-        # 2. Khởi tạo DataFrame (Gán ngay để tránh UnboundLocalError)
-        df = pd.DataFrame(res.data)
+        # 1. Lấy dữ liệu sửa chữa
+        res_repair = supabase.table("repair_cases").select("*").execute()
+        df_repair = pd.DataFrame(res_repair.data)
 
-        # 3. Kiểm tra nếu không có dữ liệu (Rỗng)
-        if df.empty:
-            return pd.DataFrame(columns=required_columns)
+        # 2. Lấy danh mục máy để lấy machine_code
+        res_machines = supabase.table("machines").select("id, machine_code").execute()
+        df_machines = pd.DataFrame(res_machines.data)
 
-        # 4. TIỀN XỬ LÝ DỮ LIỆU
-        # Chuyển đổi ngày tháng (errors='coerce' sẽ biến lỗi thành NaT)
+        if df_repair.empty:
+            return pd.DataFrame(columns=['machine_display', 'NĂM', 'THÁNG', 'CHI_PHÍ', 'branch'])
+
+        # 3. MAPPING: Đổi ID dài ngoằng thành Code ngắn gọn
+        # Gộp bảng repair với bảng machines dựa trên cột id máy
+        df = df_repair.merge(
+            df_machines, 
+            left_on='machine_id', 
+            right_on='id', 
+            how='left', 
+            suffixes=('', '_m')
+        )
+
+        # 4. TẠO CỘT HIỂN THỊ CHUẨN
+        # Nếu có machine_code thì hiện, không thì hiện 'N/A' thay vì cái ID dài
+        df['machine_display'] = df['machine_code'].fillna('N/A')
+
+        # --- Các bước xử lý NĂM/THÁNG/CHI PHÍ giữ nguyên như cũ ---
         df['confirmed_dt'] = pd.to_datetime(df['confirmed_date'], errors='coerce')
-        
-        # Xử lý trường hợp ngày xác nhận trống thì lấy ngày tạo (nếu có) hoặc bỏ qua
-        if 'created_at' in df.columns:
-            df['confirmed_dt'] = df['confirmed_dt'].fillna(pd.to_datetime(df['created_at'], errors='coerce'))
-        
-        # Loại bỏ các dòng không thể xác định ngày tháng để tránh lỗi khi trích xuất Năm/Tháng
         df = df.dropna(subset=['confirmed_dt'])
-
-        if not df.empty:
-            # Tạo cột NĂM và THÁNG (Ép kiểu int để dùng cho Selectbox)
-            df['NĂM'] = df['confirmed_dt'].dt.year.astype(int)
-            df['THÁNG'] = df['confirmed_dt'].dt.month.astype(int)
-            
-            # Xử lý CHI_PHÍ: Chuyển đổi về số, thay thế NaN bằng 0
-            df['CHI_PHÍ'] = pd.to_numeric(df.get('compensation', 0), errors='coerce').fillna(0)
-            
-            # Đảm bảo có cột hiển thị máy
-            if 'machine_display' not in df.columns:
-                df['machine_display'] = df.get('machine_id', 'Unknown Device')
-        else:
-            # Trả về khung cột nếu sau khi lọc bị trống
-            return pd.DataFrame(columns=required_columns)
+        df['NĂM'] = df['confirmed_dt'].dt.year.astype(int)
+        df['THÁNG'] = df['confirmed_dt'].dt.month.astype(int)
+        df['CHI_PHÍ'] = pd.to_numeric(df.get('compensation', 0), errors='coerce').fillna(0)
 
         return df
-
     except Exception as e:
-        # Log lỗi nhưng vẫn trả về DataFrame trống để giao diện không bị sập hoàn toàn
-        st.error(f"⚠️ Lỗi hệ thống dữ liệu: {str(e)}")
-        return pd.DataFrame(columns=required_columns)
-
+        st.error(f"Lỗi Mapping: {e}")
+        return pd.DataFrame()
 def insert_new_repair(data_dict):
     """
     Thêm bản ghi mới vào bảng repair_cases.
