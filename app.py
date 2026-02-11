@@ -28,7 +28,7 @@ def main():
             st.rerun()
 
     # Tabs
-    tab_dash, tab_admin, tab_kpi, tab_alert = st.tabs([
+    tab_dash, tab_admin, tab_kpi, tab_ai, tab_alert = st.tabs([
         "📊 BÁO CÁO VẬN HÀNH", 
         "📥 QUẢN TRỊ VÀ NHẬP LIỆU", 
         "🎯 KPI HIỆU SUẤT", 
