@@ -5,6 +5,41 @@ from datetime import datetime
 from core.database import supabase
 from services.repair_service import insert_new_repair
 
+def render_status_management(df):
+    st.subheader("🚚 Quản lý luồng máy Nhận - Trả")
+    
+    # Chọn máy đang xử lý (Chỉ hiện các máy chưa trả)
+    active_cases = df[df['status'] != "5. Đã trả"]
+    
+    if active_cases.empty:
+        st.success("✅ Hiện tại không có máy nào đang chờ xử lý.")
+        return
+
+    selected_code = st.selectbox("Quét hoặc chọn mã máy:", active_cases['machine_display'].unique())
+    case_info = active_cases[active_cases['machine_display'] == selected_code].iloc[0]
+
+    # Hiển thị thông tin đối soát nhanh
+    col1, col2, col3 = st.columns(3)
+    col1.metric("Nguồn gốc", case_info['origin_branch'])
+    col2.metric("Trạng thái hiện tại", case_info['status'])
+    col3.metric("Người nhận kho", case_info.get('receiver_name', 'Chưa rõ'))
+
+    st.divider()
+    
+    # Form cập nhật trạng thái
+    with st.expander("🔄 Cập nhật tiến độ / Giao trả máy", expanded=True):
+        new_st = st.selectbox("Chuyển sang trạng thái:", 
+                             ["2. Đang sửa", "3. Gửi NCC", "4. Hoàn thành", "5. Đã trả"])
+        staff = st.text_input("Nhân viên xác nhận (Ký tên):")
+        note = st.text_area("Ghi chú chi tiết:")
+        
+        if st.button("Xác nhận cập nhật", type="primary"):
+            if not staff:
+                st.warning("⚠️ Vui lòng nhập tên nhân viên để đối soát!")
+            else:
+                update_tracking_status(case_info['id'], new_st, staff, note)
+                st.success(f"Đã cập nhật trạng thái máy {selected_code} thành {new_st}")
+                st.rerun()
 def render_admin_panel(df_db):
     st.title("📥 Quản Trị & Điều Hành Hệ Thống")
 
