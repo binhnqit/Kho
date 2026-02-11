@@ -5,22 +5,19 @@ import plotly.express as px
 def render_dashboard(df):
     st.title("📊 BÁO CÁO VẬN HÀNH – DECISION DASHBOARD")
 
-    if df.empty:
+    # 1. KIỂM TRA DỮ LIỆU ĐẦU VÀO
+    if df is None or df.empty:
         st.info("💡 Chưa có dữ liệu. Vui lòng nạp ở Tab Quản trị.")
         return
 
-    # ---------- SIDEBAR FILTER (Chỉ hiển thị khi có dữ liệu) ----------
+    # 2. ---------- SIDEBAR FILTER ----------
     with st.sidebar:
         st.header("⚙️ BỘ LỌC BÁO CÁO")
         
-        # Nút làm mới nhanh
-        #if st.button("🔄 Làm mới dữ liệu", use_container_width=True):
-            #st.cache_data.clear()
-            #st.rerun()
-
         f_mode = st.radio("Chế độ lọc thời gian", ["Tháng / Năm", "Khoảng ngày"])
 
         if f_mode == "Tháng / Năm":
+            # Lấy danh sách Năm và Tháng từ dữ liệu
             y_list = sorted(df['NĂM'].dropna().unique().astype(int), reverse=True)
             sel_y = st.selectbox("Năm", y_list)
 
@@ -44,45 +41,47 @@ def render_dashboard(df):
             else:
                 df_view = df.copy()
 
-        # Bộ lọc chi nhánh
-        # Lấy danh sách chi nhánh, loại bỏ giá trị rỗng và chuyển về string để sorted không lỗi
-        available_branches = sorted([str(x) for x in df_db['branch'].dropna().unique()])
+        # --- BỘ LỌC CHI NHÁNH (Sửa lỗi KeyError và lọc sạch dữ liệu) ---
+        # Sử dụng 'df' thay vì 'df_db'
+        available_branches = sorted([str(x) for x in df['branch'].dropna().unique()])
 
         sel_branch = st.multiselect(
-        "Chi nhánh",
-        options=available_branches,
-        default=available_branches
+            "Chi nhánh",
+            options=available_branches,
+            default=available_branches
         )
-        sel_branch = st.multiselect("Chi nhánh", options=all_branches, default=all_branches)
+        # Thực hiện lọc theo chi nhánh đã chọn
         df_view = df_view[df_view['branch'].isin(sel_branch)]
 
-    # Kiểm tra sau khi lọc
+    # 3. KIỂM TRA SAU KHI LỌC
     if df_view.empty:
         st.warning("⚠️ Không có dữ liệu phù hợp với bộ lọc.")
         return
 
-    # ---------- KPI LAYER ----------
+    # 4. ---------- KPI LAYER ----------
     st.subheader("🚀 Chỉ số tổng quan")
     k1, k2, k3, k4 = st.columns(4)
     
-    # Sử dụng machine_display đã được xử lý từ Service
+    # Xác định máy rủi ro và chi nhánh hot dựa trên dữ liệu đã lọc
     risky_machine = df_view['machine_display'].value_counts().idxmax()
+    hot_branch = df_view['branch'].value_counts().idxmax()
 
     k1.metric("💰 Tổng chi phí", f"{df_view['CHI_PHÍ'].sum():,.0f} đ")
     k2.metric("🛠️ Tổng số ca", f"{len(df_view)} ca")
-    k3.metric("🏢 Chi nhánh HOT", df_view['branch'].value_counts().idxmax())
+    k3.metric("🏢 Chi nhánh HOT", hot_branch)
     k4.metric("⚠️ Máy rủi ro nhất", risky_machine)
 
     st.divider()
 
-    # ---------- TREND ANALYSIS ----------
+    # 5. ---------- TREND ANALYSIS ----------
     st.subheader("📈 Xu hướng sự cố theo thời gian")
     trend = (
         df_view.groupby(['NĂM', 'THÁNG'])
         .agg(so_ca=('id', 'count'), chi_phi=('CHI_PHÍ', 'sum'))
         .reset_index()
     )
-    # Convert Tháng sang chuỗi để biểu đồ hiển thị đẹp hơn
+    # Sắp xếp theo thời gian và tạo label hiển thị
+    trend = trend.sort_values(['NĂM', 'THÁNG'])
     trend['Tháng/Năm'] = trend['THÁNG'].astype(str) + "/" + trend['NĂM'].astype(str)
     
     fig_trend = px.line(
@@ -92,11 +91,10 @@ def render_dashboard(df):
     )
     st.plotly_chart(fig_trend, use_container_width=True)
 
-    # ---------- RISK SCORING ----------
+    # 6. ---------- RISK SCORING ----------
     st.divider()
     st.subheader("⚠️ Bảng xếp hạng rủi ro thiết bị (Risk Scoring)")
     
-    # Tính toán Risk Score dựa trên machine_display (Mã máy)
     today = pd.Timestamp.now()
     risk_df = (
         df_view.groupby('machine_display')
@@ -110,10 +108,12 @@ def render_dashboard(df):
     )
 
     if not risk_df.empty:
-        # Chuẩn hóa điểm 0-1
-        risk_df['freq_score'] = risk_df['so_ca'] / risk_df['so_ca'].max()
-        risk_df['cost_score'] = risk_df['tong_chi_phi'] / risk_df['tong_chi_phi'].max()
-        # Điểm gần đây: Nếu có ca trong vòng 30 ngày thì cộng thêm điểm rủi ro
+        # Chuẩn hóa điểm 0-1 (tránh chia cho 0 nếu chỉ có 1 ca)
+        max_ca = risk_df['so_ca'].max() if risk_df['so_ca'].max() != 0 else 1
+        max_cost = risk_df['tong_chi_phi'].max() if risk_df['tong_chi_phi'].max() != 0 else 1
+        
+        risk_df['freq_score'] = risk_df['so_ca'] / max_ca
+        risk_df['cost_score'] = risk_df['tong_chi_phi'] / max_cost
         risk_df['recent_score'] = ((today - risk_df['last_case']).dt.days <= 30).astype(int)
         
         # Trọng số: 50% Tần suất - 40% Chi phí - 10% Độ gần đây
@@ -126,7 +126,6 @@ def render_dashboard(df):
 
         risk_df['mức_rủi_ro'] = risk_df['risk_score'].apply(risk_label)
         
-        # Hiển thị bảng Risk
         st.dataframe(
             risk_df.sort_values('risk_score', ascending=False)[
                 ['machine_display', 'branch', 'so_ca', 'tong_chi_phi', 'risk_score', 'mức_rủi_ro']
@@ -150,7 +149,7 @@ def render_dashboard(df):
         )
         st.plotly_chart(fig_heat, use_container_width=True)
 
-    # ---------- DRILL DOWN ----------
+    # 7. ---------- DRILL DOWN ----------
     st.divider()
     st.subheader("🔍 Drill-down chi tiết theo thiết bị")
     
