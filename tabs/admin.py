@@ -112,10 +112,45 @@ def render_admin_panel(df_db):
 
     # --- SUB-TAB 3: CHI NHÁNH ---
     with ad_sub2:
-        # Giữ nguyên code thống kê chi nhánh của bạn...
-        pass
+        st.subheader("🏢 Hiệu suất vận hành theo Chi nhánh")
+        if df_db.empty:
+            st.info("Chưa có dữ liệu để phân tích chi nhánh.")
+        else:
+            sel_b = st.selectbox("Chọn chi nhánh để xem chi tiết", sorted(df_db["branch"].unique()))
+            df_b = df_db[df_db["branch"] == sel_b]
+            
+            c1, c2 = st.columns(2)
+            with c1:
+                # Dùng machine_display (Mã máy thân thiện)
+                view = df_b.groupby("machine_display").agg(
+                    so_ca=("id", "count"),
+                    tong_chi_phi=("CHI_PHÍ", "sum")
+                ).sort_values("so_ca", ascending=False).reset_index()
+                st.write(f"Danh sách máy hỏng tại {sel_b}")
+                st.dataframe(view, use_container_width=True, hide_index=True)
+            with c2:
+                fig_pie = px.pie(view.head(5), values='so_ca', names='machine_display', title="Top 5 máy hỏng nhiều nhất")
+                st.plotly_chart(fig_pie, use_container_width=True)
 
-    # --- SUB-TAB 4: AUDIT LOG ---
-    with ad_sub4:
-        st.subheader("📜 Nhật ký hệ thống")
-        # Giữ nguyên code audit log...
+    # ---------------------------------------------------------
+    # SUB-TAB 3: AUDIT LOG
+    # ---------------------------------------------------------
+    with ad_sub3:
+        st.subheader("📜 Nhật ký hệ thống (100 hoạt động gần nhất)")
+        if st.button("🔄 Refresh Nhật ký"):
+            st.rerun()
+
+        try:
+            res_audit = supabase.table("audit_logs").select("*").order("created_at", desc=True).limit(100).execute()
+            if res_audit.data:
+                df_audit = pd.DataFrame(res_audit.data)
+                df_audit['created_at'] = pd.to_datetime(df_audit['created_at']).dt.strftime('%H:%M:%S %d-%m-%Y')
+                st.dataframe(
+                    df_audit[['created_at', 'actor', 'action', 'payload']], 
+                    use_container_width=True,
+                    hide_index=True
+                )
+            else:
+                st.info("Nhật ký trống.")
+        except Exception as e:
+            st.warning("⚠️ Không thể tải Audit Log. Hãy đảm bảo bạn đã tạo bảng 'audit_logs' trên Supabase.")
