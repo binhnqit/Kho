@@ -3,65 +3,6 @@ import pandas as pd
 import plotly.express as px
 
             
-def render_status_management(df):
-    st.markdown("### 🚚 Điều phối & Đối soát thiết bị")
-    
-    # --- PHẦN 1: DASHBOARD TỔNG HỢP & LỌC VÙNG ---
-    list_branches = ["Tất cả"] + sorted(df['branch'].unique().tolist())
-    selected_region = st.selectbox("📍 Lọc theo khu vực đối soát:", list_branches, key="reg_filter")
-    df_filtered = df if selected_region == "Tất cả" else df[df['branch'] == selected_region]
-
-    # Hiển thị nhanh số lượng theo trạng thái
-    status_counts = df_filtered['status'].value_counts().reindex(STATUS_OPTIONS, fill_value=0)
-    cols = st.columns(len(STATUS_OPTIONS))
-    for idx, (status, count) in enumerate(status_counts.items()):
-        label = status.split(". ")[1] if ". " in status else status
-        cols[idx].metric(label, f"{count} máy")
-
-    st.divider()
-
-    # --- PHẦN 2: ENTERPRISE TRACKING (KIỂM TRA CHUYÊN SÂU) ---
-    st.markdown("#### 🔍 Danh sách kiểm soát nhanh")
-    t1, t2, t3 = st.tabs(["🏭 Tại NCC", "✅ Chờ trả", "🚚 Đã trả"])
-    
-    with t1:
-        df_ncc = df_filtered[df_filtered['status'] == "4. Gửi nhà cung cấp"]
-        st.dataframe(df_ncc[['machine_display', 'confirmed_date', 'issue_reason']], use_container_width=True)
-    with t2:
-        df_ready = df_filtered[df_filtered['status'] == "5. Đã sửa xong"]
-        st.dataframe(df_ready[['machine_display', 'branch', 'note']], use_container_width=True)
-    with t3:
-        df_ret = df_filtered[df_filtered['status'] == "6. Đã trả chi nhánh"].head(10)
-        st.dataframe(df_ret[['machine_display', 'updated_at']], use_container_width=True)
-
-    st.divider()
-
-    # --- PHẦN 3: FORM CẬP NHẬT CHI TIẾT ---
-    active_cases = df_filtered[df_filtered['status'] != "6. Đã trả chi nhánh"]
-    if not active_cases.empty:
-        sel_m = st.selectbox("🔍 Chọn máy để cập nhật:", active_cases['machine_display'].unique())
-        case = active_cases[active_cases['machine_display'] == sel_m].iloc[0]
-        
-        with st.expander(f"⚙️ Cập nhật cho: {sel_m}", expanded=True):
-            c1, c2 = st.columns(2)
-            with c1:
-                new_st = st.selectbox("Trạng thái mới:", STATUS_OPTIONS, index=STATUS_OPTIONS.index(case['status']))
-                staff = st.text_input("Nhân viên thực hiện:", value=case.get('receiver_name', ""))
-            with c2:
-                reason = st.text_input("Lý do thực tế:", value=case.get('issue_reason', ""))
-                cost = st.number_input("Chi phí (VNĐ):", value=int(case.get('compensation', 0)))
-            
-            if st.button("💾 Xác nhận cập nhật", type="primary", use_container_width=True):
-                # Logic Update Supabase
-                payload = {
-                    "status": new_st, "receiver_name": staff, 
-                    "issue_reason": reason, "compensation": float(cost),
-                    "updated_at": datetime.now().isoformat()
-                }
-                supabase.table("repair_cases").update(payload).eq("id", case['id']).execute()
-                st.success("Đã cập nhật!")
-                st.cache_data.clear()
-                st.rerun()
 def render_dashboard(df):
     # 1. KIỂM TRA DỮ LIỆU ĐẦU VÀO
     if df is None or df.empty:
