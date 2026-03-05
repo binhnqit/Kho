@@ -7,30 +7,74 @@ from services.repair_service import insert_new_repair, update_repair_tracking, S
 
 def render_status_management(df):
     """
-    Giao diện Quản lý luồng máy Nhận - Trả (Đã fix theo cấu trúc repair_cases)
+    Giao diện Quản lý luồng máy Nhận - Trả chuyên nghiệp.
+    Tích hợp Dashboard tổng hợp, Bộ lọc vùng miền và Cập nhật tiến độ kỹ thuật.
     """
+    
+    # ==========================================
+    # 1. PHẦN TỔNG HỢP & LỌC THEO VÙNG (DASHBOARD)
+    # ==========================================
+    st.markdown("### 📊 Tổng quan vận hành")
+    
+    # Bộ lọc vùng miền cho toàn bộ Tab
+    list_branches = ["Tất cả"] + sorted(df['branch'].unique().tolist())
+    selected_region = st.selectbox("📍 Lọc theo khu vực đối soát:", list_branches, index=0)
+    
+    # Lọc dữ liệu theo vùng đã chọn
+    df_filtered = df if selected_region == "Tất cả" else df[df['branch'] == selected_region]
+
+    # Tính toán số lượng theo trạng thái (Dựa trên STATUS_OPTIONS từ ảnh của bạn)
+    # STATUS_OPTIONS dự kiến: ["1. Chờ nhận", "2. Đã nhận kho tổng", "3. Đang sửa nội bộ", "4. Gửi nhà cung cấp", "5. Đã sửa xong", "6. Đã trả chi nhánh"]
+    status_counts = df_filtered['status'].value_counts().reindex(STATUS_OPTIONS, fill_value=0).reset_index()
+    status_counts.columns = ['Trạng thái', 'Số lượng']
+
+    # Hiển thị Metrics tóm tắt
+    m_cols = st.columns(len(STATUS_OPTIONS))
+    for idx, row in status_counts.iterrows():
+        # Chỉ lấy phần text sau số thứ tự để hiển thị metric (ví dụ: "Chờ nhận")
+        label = row['Trạng thái'].split(". ")[1] if ". " in row['Trạng thái'] else row['Trạng thái']
+        m_cols[idx].metric(label, f"{row['Số lượng']} máy")
+
+    # Biểu đồ trực quan hóa cơ cấu máy theo trạng thái
+    fig_status = px.bar(
+        status_counts, 
+        x='Số lượng', 
+        y='Trạng thái', 
+        orientation='h',
+        title=f"Phân bổ thiết bị - {selected_region}",
+        color='Trạng thái',
+        color_discrete_sequence=px.colors.qualitative.Pastel
+    )
+    fig_status.update_layout(showlegend=False, height=300, margin=dict(t=30, b=0, l=0, r=0))
+    st.plotly_chart(fig_status, use_container_width=True)
+
+    st.divider()
+
+    # ==========================================
+    # 2. PHẦN ĐIỀU PHỐI & CẬP NHẬT CHI TIẾT
+    # ==========================================
     st.markdown("### 🚚 Điều phối & Đối soát thiết bị")
     
-    # 1. Kiểm tra tính toàn vẹn của dữ liệu (Dựa trên schema bạn gửi)
+    # Kiểm tra tính toàn vẹn Schema
     required_cols = ['status', 'machine_display', 'branch', 'id', 'issue_reason']
     if not all(col in df.columns for col in required_cols):
-        st.error("❌ Cấu trúc Database không tương thích. Vui lòng kiểm tra lại Query lấy dữ liệu.")
+        st.error("❌ Cấu trúc Database không tương thích. Vui lòng kiểm tra lại Query.")
         return
 
-    # Lọc các ca đang xử lý
-    active_cases = df[df['status'] != "6. Đã trả chi nhánh"]
+    # Lọc các ca đang xử lý (SLA Active) trong vùng đã chọn
+    active_cases = df_filtered[df_filtered['status'] != "6. Đã trả chi nhánh"]
     
     if active_cases.empty:
-        st.success("✅ Hệ thống sạch sẽ! Tất cả thiết bị đã được hoàn trả chi nhánh.")
+        st.success(f"✅ Khu vực {selected_region} hiện không có thiết bị tồn đọng.")
         return
 
-    # 2. Giao diện chọn thiết bị
+    # Giao diện chọn thiết bị
     col_sel, col_info = st.columns([1, 1.5])
     with col_sel:
         selected_code = st.selectbox(
             "🔍 Tìm mã máy / Quét mã:", 
             active_cases['machine_display'].unique(),
-            key="select_machine_status"
+            key="status_mgmt_select"
         )
         
     case_info = active_cases[active_cases['machine_display'] == selected_code].iloc[0]
@@ -44,7 +88,7 @@ def render_status_management(df):
 
     st.markdown("---")
     
-    # 3. Form cập nhật tiến độ & Tình trạng hư hỏng thực tế
+    # Form cập nhật tiến độ & Tình trạng hư hỏng thực tế
     with st.expander(f"⚙️ Cập nhật tiến độ & Kỹ thuật cho: {selected_code}", expanded=True):
         col_left, col_right = st.columns([1, 1])
         
@@ -60,10 +104,7 @@ def render_status_management(df):
 
         with col_right:
             st.markdown("##### 🛠️ Tình trạng hư hỏng thực tế")
-            # Cập nhật trực tiếp vào cột issue_reason (text)
-            actual_reason = st.text_input("Lý do hỏng thực tế:", value=case_info['issue_reason'])
-            # Cập nhật trực tiếp vào cột compensation (numeric)
-            # Ép kiểu int/float để khớp với kiểu numeric trong DB
+            actual_reason = st.text_input("Lý do hỏng thực tế:", value=case_info.get('issue_reason', ""))
             current_comp = case_info.get('compensation') if pd.notnull(case_info.get('compensation')) else 0
             actual_cost = st.number_input("Chi phí thực tế (VNĐ):", min_value=0, value=int(current_comp), step=10000)
             
@@ -74,7 +115,6 @@ def render_status_management(df):
                 st.warning("⚠️ Vui lòng nhập tên nhân viên để đảm bảo tính Audit Log!")
             else:
                 with st.spinner("Đang đồng bộ dữ liệu..."):
-                    # CHUẨN HÓA DATA THEO SCHEMA BẢNG repair_cases
                     update_payload = {
                         "status": new_st,
                         "receiver_name": staff,
@@ -82,13 +122,11 @@ def render_status_management(df):
                         "issue_reason": actual_reason,
                         "compensation": float(actual_cost),
                         "confirmed_date": conf_date.isoformat(),
-                        "updated_at": datetime.now().isoformat() # Cập nhật thời gian sửa đổi
+                        "updated_at": datetime.now().isoformat()
                     }
                     
                     try:
-                        # Thực thi lệnh update vào đúng bảng repair_cases
                         res = supabase.table("repair_cases").update(update_payload).eq("id", case_info['id']).execute()
-                        
                         if res:
                             st.toast(f"✅ Đã cập nhật máy {selected_code} thành công!")
                             st.cache_data.clear()
@@ -96,16 +134,17 @@ def render_status_management(df):
                     except Exception as e:
                         st.error(f"❌ Lỗi Database: {str(e)}")
 
-    # 4. Tra cứu lịch sử kỹ thuật (Lấy từ bảng repair_cases qua df tổng)
+    # ==========================================
+    # 3. PHẦN TRA CỨU LỊCH SỬ THIẾT BỊ
+    # ==========================================
     st.divider()
     st.subheader(f"🔍 Lịch sử thiết bị: {selected_code}")
     
+    # Lấy lịch sử toàn bộ của máy này từ df gốc (không lọc theo vùng để thấy hành trình xuyên vùng)
     df_machine = df[df['machine_display'] == selected_code].copy()
     
     m_col1, m_col2 = st.columns(2)
-    m_col1.info(f"📍 Chi nhánh quản lý: **{df_machine['branch'].iloc[0]}**")
-    
-    # Tính tổng chi phí từ cột compensation
+    m_col1.info(f"📍 Chi nhánh hiện tại: **{df_machine['branch'].iloc[0]}**")
     total_cost = df_machine['compensation'].sum() if 'compensation' in df_machine.columns else 0
     m_col2.error(f"💸 Tổng chi phí tích lũy: **{total_cost:,.0f} đ**")
 
