@@ -2,70 +2,7 @@ import streamlit as st
 import pandas as pd
 import plotly.express as px
 
-def render_enterprise_tracking(df):
-    st.markdown("### 🔍 Trung tâm Kiểm soát Chuyên sâu (Enterprise View)")
-    
-    # Tạo các Tab để quản lý từng nhóm đối tượng cụ thể
-    tab_ncc, tab_fixed, tab_returned = st.tabs([
-        "🏭 Đang gửi NCC", 
-        "✅ Đã sửa - Chờ trả", 
-        "🚚 Đã trả chi nhánh"
-    ])
-
-    # 1. Quản lý máy tại Nhà cung cấp
-    with tab_ncc:
-        df_ncc = df[df['status'] == "4. Gửi nhà cung cấp"].copy()
-        if not df_ncc.empty:
-            # Tính số ngày đã nằm tại NCC (SLA)
-            df_ncc['days_at_ncc'] = (datetime.now().date() - pd.to_datetime(df_ncc['confirmed_date']).dt.date).dt.days
             
-            st.warning(f"Hiện có {len(df_ncc)} máy đang nằm tại NCC. Cần chú ý các máy quá 7 ngày.")
-            st.dataframe(
-                df_ncc.sort_values('days_at_ncc', ascending=False),
-                column_config={
-                    "days_at_ncc": st.column_config.NumberColumn("Số ngày tồn", format="%d ngày ⏳"),
-                    "machine_display": "Mã máy",
-                    "issue_reason": "Lý do hỏng",
-                    "receiver_name": "Người phụ trách"
-                },
-                use_container_width=True, hide_index=True
-            )
-        else:
-            st.success("Không có máy nào đang ở NCC.")
-
-    # 2. Quản lý máy đã sửa xong nhưng chưa trả
-    with tab_fixed:
-        df_ready = df[df['status'] == "5. Đã sửa xong"].copy()
-        if not df_ready.empty:
-            st.info(f"Có {len(df_ready)} máy đã sửa xong, đang chờ đóng gói gửi trả chi nhánh.")
-            st.dataframe(
-                df_ready[['machine_display', 'branch', 'confirmed_date', 'compensation', 'note']],
-                column_config={
-                    "compensation": st.column_config.NumberColumn("Chi phí cuối", format="%d đ"),
-                    "branch": "Chi nhánh nhận lại"
-                },
-                use_container_width=True, hide_index=True
-            )
-        else:
-            st.write("Kho trống - Tất cả máy đã sửa đều đã được đóng gói trả đi.")
-
-    # 3. Đối soát máy đã trả chi nhánh (Audit Log)
-    with tab_returned:
-        # Lọc trạng thái số 6 (Theo ảnh cấu trúc của bạn)
-        df_returned = df[df['status'] == "6. Đã trả chi nhánh"].copy()
-        
-        # Thống kê theo vùng
-        col_res1, col_res2 = st.columns([1, 2])
-        with col_res1:
-            st.markdown("**Số lượng đã trả theo vùng:**")
-            st.table(df_returned['branch'].value_counts())
-        
-        with col_res2:
-            st.markdown("**Lịch sử trả máy (30 ngày gần nhất):**")
-            st.dataframe(
-                df_returned.sort_values('updated_at', ascending=False).head(50),
-                use_container_width=True, hide_index=True
-            )
 def render_dashboard(df):
     # 1. KIỂM TRA DỮ LIỆU ĐẦU VÀO
     if df is None or df.empty:
