@@ -19,21 +19,37 @@ def render_enterprise_tracking(df_to_track):
     ])
 
     with tab_ncc:
-        # Xử lý dữ liệu máy tại NCC
+        # 1. Lọc và tạo bản sao để tránh SettingWithCopyWarning
         df_ncc = df_to_track[df_to_track['status'].str.contains("4.", na=False)].copy()
+        
         if not df_ncc.empty:
-            # Xử lý ngày tháng an toàn để tránh lỗi AttributeError đã gặp trước đó
+            # 2. Ép kiểu dữ liệu ngày tháng an toàn
             df_ncc['confirmed_date'] = pd.to_datetime(df_ncc['confirmed_date'], errors='coerce')
+            
+            # 3. Loại bỏ dòng không có ngày (NaT) để tránh lỗi .dt
             df_ncc = df_ncc.dropna(subset=['confirmed_date'])
             
             if not df_ncc.empty:
-                df_ncc['days'] = (datetime.now().date() - df_ncc['confirmed_date'].dt.date).dt.days
-                st.warning(f"⚠️ Có {len(df_ncc)} máy đang nằm tại NCC.")
+                # 4. CÁCH TÍNH TOÁN AN TOÀN NHẤT:
+                # Tính khoảng cách thời gian (Timedelta)
+                delta = pd.to_datetime(datetime.now().date()) - pd.to_datetime(df_ncc['confirmed_date'].dt.date)
+                
+                # Trích xuất số ngày từ Timedelta
+                df_ncc['days'] = delta.dt.days
+                
+                st.warning(f"⚠️ Có {len(df_ncc)} máy đang nằm tại NCC. Chú ý các máy tồn > 7 ngày.")
                 st.dataframe(
                     df_ncc[['machine_display', 'days', 'issue_reason', 'receiver_name']], 
-                    column_config={"days": st.column_config.NumberColumn("Số ngày tồn", format="%d ngày ⏳")},
+                    column_config={
+                        "machine_display": "Mã máy",
+                        "days": st.column_config.NumberColumn("Số ngày tồn", format="%d ngày ⏳"),
+                        "issue_reason": "Lý do hỏng",
+                        "receiver_name": "Người giữ"
+                    },
                     use_container_width=True, hide_index=True
                 )
+            else:
+                st.info("Không có dữ liệu ngày xác nhận hợp lệ cho các máy tại NCC.")
         else:
             st.info("Hiện tại không có máy nào đang gửi NCC.")
 
