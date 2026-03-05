@@ -5,6 +5,50 @@ from datetime import datetime
 from core.database import supabase
 from services.repair_service import insert_new_repair, update_repair_tracking, STATUS_OPTIONS
 
+def render_enterprise_tracking(df_to_track):
+    """
+    Tính năng đối soát chuyên sâu dành cho Admin
+    """
+    st.markdown("#### 🔍 Danh sách đối soát nhanh (Real-time)")
+    tab_ncc, tab_fixed, tab_returned = st.tabs([
+        "🏭 Đang gửi NCC", 
+        "✅ Đã sửa - Chờ trả", 
+        "🚚 Đã trả chi nhánh"
+    ])
+
+    with tab_ncc:
+        # Lọc các máy ở trạng thái số 4 (Gửi nhà cung cấp)
+        df_ncc = df_to_track[df_to_track['status'].str.contains("4.", na=False)].copy()
+        if not df_ncc.empty:
+            # Tính số ngày tồn kho bảo hành
+            df_ncc['days'] = (datetime.now().date() - pd.to_datetime(df_ncc['confirmed_date']).dt.date).dt.days
+            st.warning(f"⚠️ Có {len(df_ncc)} máy đang nằm tại NCC. Chú ý các máy tồn > 7 ngày.")
+            st.dataframe(
+                df_ncc[['machine_display', 'days', 'issue_reason', 'receiver_name']], 
+                column_config={"days": st.column_config.NumberColumn("Số ngày tồn", format="%d ngày ⏳")},
+                use_container_width=True, hide_index=True
+            )
+        else:
+            st.info("Hiện tại không có máy nào đang gửi NCC.")
+
+    with tab_fixed:
+        # Lọc các máy ở trạng thái số 5 (Đã sửa xong)
+        df_ready = df_to_track[df_to_track['status'].str.contains("5.", na=False)].copy()
+        if not df_ready.empty:
+            st.success(f"📦 Có {len(df_ready)} máy đã sửa xong, đang chờ đóng gói trả chi nhánh.")
+            st.dataframe(
+                df_ready[['machine_display', 'branch', 'compensation', 'note']], 
+                column_config={"compensation": st.column_config.NumberColumn("Chi phí", format="%d đ")},
+                use_container_width=True, hide_index=True
+            )
+        else:
+            st.info("Không có máy nào đang chờ trả.")
+
+    with tab_returned:
+        # Lọc các máy ở trạng thái số 6 (Đã trả chi nhánh)
+        df_ret = df_to_track[df_to_track['status'].str.contains("6.", na=False)].copy()
+        st.write("Dữ liệu 20 ca hoàn tất gần nhất:")
+        st.dataframe(df_ret.sort_values('updated_at', ascending=False).head(20), use_container_width=True, hide_index=True)
 def render_status_management(df):
     """
     Giao diện Quản lý luồng máy Nhận - Trả chuyên nghiệp.
