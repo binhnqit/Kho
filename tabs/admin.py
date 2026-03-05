@@ -7,73 +7,97 @@ from services.repair_service import insert_new_repair, update_repair_tracking, S
 
 def render_enterprise_tracking(df_to_track):
     """
-    Tính năng đối soát chuyên sâu dành cho Admin
+    Tính năng đối soát chuyên sâu: Tìm kiếm và Phân loại máy theo trạng thái
     """
-    st.markdown("#### 🔍 Danh sách đối soát nhanh (Real-time)")
+    st.markdown("#### 🔍 Đối soát & Tra cứu nhanh")
+
+    # --- CHỨC NĂNG TÌM KIẾM ---
+    search_query = st.text_input("🔎 Tìm nhanh theo Mã máy hoặc Tên khách hàng:", placeholder="Nhập mã máy (vd: 3101) hoặc tên khách...")
     
-    # KHỞI TẠO BIẾN TAB Ở ĐÂY
+    # Thực hiện lọc dựa trên tìm kiếm
+    if search_query:
+        df_to_track = df_to_track[
+            df_to_track['machine_display'].str.contains(search_query, case=False, na=False) |
+            df_to_track['customer_name'].str.contains(search_query, case=False, na=False)
+        ]
+
     tab_ncc, tab_fixed, tab_returned = st.tabs([
         "🏭 Đang gửi NCC", 
         "✅ Đã sửa - Chờ trả", 
         "🚚 Đã trả chi nhánh"
     ])
 
+    # --- TAB 1: GỬI NCC (Đã fix lỗi ngày tháng) ---
     with tab_ncc:
-        # 1. Lọc và tạo bản sao để tránh SettingWithCopyWarning
         df_ncc = df_to_track[df_to_track['status'].str.contains("4.", na=False)].copy()
-        
         if not df_ncc.empty:
-            # 2. Ép kiểu dữ liệu ngày tháng an toàn
             df_ncc['confirmed_date'] = pd.to_datetime(df_ncc['confirmed_date'], errors='coerce')
-            
-            # 3. Loại bỏ dòng không có ngày (NaT) để tránh lỗi .dt
             df_ncc = df_ncc.dropna(subset=['confirmed_date'])
-            
             if not df_ncc.empty:
-                # 4. CÁCH TÍNH TOÁN AN TOÀN NHẤT:
-                # Tính khoảng cách thời gian (Timedelta)
+                # Tính số ngày tồn an toàn
                 delta = pd.to_datetime(datetime.now().date()) - pd.to_datetime(df_ncc['confirmed_date'].dt.date)
-                
-                # Trích xuất số ngày từ Timedelta
                 df_ncc['days'] = delta.dt.days
                 
-                st.warning(f"⚠️ Có {len(df_ncc)} máy đang nằm tại NCC. Chú ý các máy tồn > 7 ngày.")
+                st.warning(f"⚠️ Có {len(df_ncc)} máy đang nằm tại NCC.")
                 st.dataframe(
-                    df_ncc[['machine_display', 'days', 'issue_reason', 'receiver_name']], 
+                    df_ncc[['machine_display', 'days', 'customer_name', 'branch', 'receiver_name']], 
                     column_config={
                         "machine_display": "Mã máy",
                         "days": st.column_config.NumberColumn("Số ngày tồn", format="%d ngày ⏳"),
-                        "issue_reason": "Lý do hỏng",
-                        "receiver_name": "Người giữ"
+                        "customer_name": "Khách hàng",
+                        "branch": "Chi nhánh",
+                        "receiver_name": "Người giữ/NCC"
                     },
                     use_container_width=True, hide_index=True
                 )
-            else:
-                st.info("Không có dữ liệu ngày xác nhận hợp lệ cho các máy tại NCC.")
         else:
-            st.info("Hiện tại không có máy nào đang gửi NCC.")
+            st.info("Không tìm thấy máy nào đang gửi NCC.")
 
+    # --- TAB 2: CHỜ TRẢ ---
     with tab_fixed:
-        # Xử lý dữ liệu máy đã sửa xong
         df_ready = df_to_track[df_to_track['status'].str.contains("5.", na=False)].copy()
         if not df_ready.empty:
-            st.success(f"📦 Có {len(df_ready)} máy đã sửa xong, đang chờ đóng gói.")
+            st.success(f"📦 Có {len(df_ready)} máy đã xong, chờ đóng gói.")
             st.dataframe(
-                df_ready[['machine_display', 'branch', 'compensation', 'note']], 
-                column_config={"compensation": st.column_config.NumberColumn("Chi phí", format="%d đ")},
+                df_ready[['machine_display', 'customer_name', 'branch', 'compensation', 'note']], 
+                column_config={
+                    "machine_display": "Mã máy",
+                    "customer_name": "Khách hàng",
+                    "branch": "Chi nhánh",
+                    "compensation": st.column_config.NumberColumn("Chi phí", format="%d đ"),
+                    "note": "Ghi chú sửa"
+                },
                 use_container_width=True, hide_index=True
             )
         else:
-            st.info("Không có máy nào đang chờ trả.")
+            st.info("Không tìm thấy máy nào đang chờ trả.")
 
+    # --- TAB 3: ĐÃ TRẢ (Hoàn thiện theo yêu cầu của bạn) ---
     with tab_returned:
-        # Xử lý dữ liệu máy đã trả
+        # Lọc trạng thái số 6
         df_ret = df_to_track[df_to_track['status'].str.contains("6.", na=False)].copy()
-        st.write("Dữ liệu 15 ca hoàn tất gần nhất:")
-        st.dataframe(
-            df_ret.sort_values('updated_at', ascending=False).head(15), 
-            use_container_width=True, hide_index=True
-        )
+        
+        if not df_ret.empty:
+            st.write("Dữ liệu 15 ca hoàn tất gần nhất:")
+            # Định dạng lại ngày trả cho dễ nhìn
+            df_ret['updated_at'] = pd.to_datetime(df_ret['updated_at']).dt.strftime('%d/%m/%Y %H:%M')
+            
+            st.dataframe(
+                df_ret.sort_values('updated_at', ascending=False).head(15)[
+                    ['machine_display', 'customer_name', 'branch', 'receiver_name', 'updated_at', 'compensation']
+                ], 
+                column_config={
+                    "machine_display": "Mã máy",
+                    "customer_name": "Khách hàng",
+                    "branch": "Chi nhánh",
+                    "receiver_name": "Người trả",
+                    "updated_at": "Ngày trả",
+                    "compensation": st.column_config.NumberColumn("Chi phí", format="%d đ")
+                },
+                use_container_width=True, hide_index=True
+            )
+        else:
+            st.info("Không tìm thấy dữ liệu máy đã trả.")
 def render_status_management(df):
     """
     Giao diện Quản lý luồng máy Nhận - Trả chuyên nghiệp.
