@@ -8,6 +8,7 @@ from services.repair_service import insert_new_repair, update_repair_tracking, S
 def render_enterprise_tracking(df_to_track):
     """
     Tính năng đối soát chuyên sâu: Tìm kiếm và Phân loại máy theo trạng thái
+    Tích hợp các Tab: Đang gửi NCC, Đang sửa nội bộ, Chờ trả và Đã trả.
     """
     st.markdown("#### 🔍 Đối soát & Tra cứu nhanh")
 
@@ -21,23 +22,23 @@ def render_enterprise_tracking(df_to_track):
             df_to_track['customer_name'].str.contains(search_query, case=False, na=False)
         ]
 
-    tab_ncc, tab_fixed, tab_returned = st.tabs([
+    # Khởi tạo 4 Tab đối soát
+    tab_ncc, tab_internal, tab_fixed, tab_returned = st.tabs([
         "🏭 Đang gửi NCC", 
+        "🛠️ Đang sửa nội bộ",
         "✅ Đã sửa - Chờ trả", 
         "🚚 Đã trả chi nhánh"
     ])
 
-    # --- TAB 1: GỬI NCC (Đã fix lỗi ngày tháng) ---
+    # --- TAB 1: GỬI NCC ---
     with tab_ncc:
         df_ncc = df_to_track[df_to_track['status'].str.contains("4.", na=False)].copy()
         if not df_ncc.empty:
             df_ncc['confirmed_date'] = pd.to_datetime(df_ncc['confirmed_date'], errors='coerce')
             df_ncc = df_ncc.dropna(subset=['confirmed_date'])
             if not df_ncc.empty:
-                # Tính số ngày tồn an toàn
                 delta = pd.to_datetime(datetime.now().date()) - pd.to_datetime(df_ncc['confirmed_date'].dt.date)
                 df_ncc['days'] = delta.dt.days
-                
                 st.warning(f"⚠️ Có {len(df_ncc)} máy đang nằm tại NCC.")
                 st.dataframe(
                     df_ncc[['machine_display', 'days', 'customer_name', 'branch', 'receiver_name']], 
@@ -53,7 +54,27 @@ def render_enterprise_tracking(df_to_track):
         else:
             st.info("Không tìm thấy máy nào đang gửi NCC.")
 
-    # --- TAB 2: CHỜ TRẢ ---
+    # --- TAB 2: ĐANG SỬA NỘI BỘ (TAB MỚI THÊM) ---
+    with tab_internal:
+        df_internal = df_to_track[df_to_track['status'].str.contains("3.", na=False)].copy()
+        if not df_internal.empty:
+            st.info(f"🔧 Có {len(df_internal)} máy đang được kỹ thuật nội bộ xử lý.")
+            st.dataframe(
+                df_internal[['machine_display', 'customer_name', 'branch', 'receiver_name', 'issue_reason', 'note']], 
+                column_config={
+                    "machine_display": "Mã máy",
+                    "customer_name": "Khách hàng",
+                    "branch": "Chi nhánh",
+                    "receiver_name": "Kỹ thuật xử lý",
+                    "issue_reason": "Lý do hỏng",
+                    "note": "Ghi chú tiến độ"
+                },
+                use_container_width=True, hide_index=True
+            )
+        else:
+            st.info("Hiện không có máy nào đang sửa nội bộ.")
+
+    # --- TAB 3: CHỜ TRẢ ---
     with tab_fixed:
         df_ready = df_to_track[df_to_track['status'].str.contains("5.", na=False)].copy()
         if not df_ready.empty:
@@ -72,16 +93,12 @@ def render_enterprise_tracking(df_to_track):
         else:
             st.info("Không tìm thấy máy nào đang chờ trả.")
 
-    # --- TAB 3: ĐÃ TRẢ (Hoàn thiện theo yêu cầu của bạn) ---
+    # --- TAB 4: ĐÃ TRẢ ---
     with tab_returned:
-        # Lọc trạng thái số 6
         df_ret = df_to_track[df_to_track['status'].str.contains("6.", na=False)].copy()
-        
         if not df_ret.empty:
             st.write("Dữ liệu 15 ca hoàn tất gần nhất:")
-            # Định dạng lại ngày trả cho dễ nhìn
             df_ret['updated_at'] = pd.to_datetime(df_ret['updated_at']).dt.strftime('%d/%m/%Y %H:%M')
-            
             st.dataframe(
                 df_ret.sort_values('updated_at', ascending=False).head(15)[
                     ['machine_display', 'customer_name', 'branch', 'receiver_name', 'updated_at', 'compensation']
