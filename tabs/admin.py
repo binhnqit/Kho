@@ -7,205 +7,112 @@ from services.repair_service import insert_new_repair, update_repair_tracking, S
 
 def render_enterprise_tracking(df_to_track):
     """
-    Tính năng đối soát chuyên sâu dành cho Admin
+    Tính năng đối soát chuyên sâu: Phân loại máy theo các 'điểm nóng' vận hành.
     """
-    st.markdown("#### 🔍 Danh sách đối soát nhanh (Real-time)")
+    st.markdown("#### 🔍 Danh sách đối soát nhanh (SLA Control)")
     tab_ncc, tab_fixed, tab_returned = st.tabs([
-        "🏭 Đang gửi NCC", 
-        "✅ Đã sửa - Chờ trả", 
-        "🚚 Đã trả chi nhánh"
+        "🏭 Đang tại NCC", 
+        "✅ Chờ trả chi nhánh", 
+        "🚚 Hoàn tất gần đây"
     ])
 
     with tab_ncc:
-        # Lọc các máy ở trạng thái số 4 (Gửi nhà cung cấp)
+        # Lọc trạng thái '4. Gửi nhà cung cấp'
         df_ncc = df_to_track[df_to_track['status'].str.contains("4.", na=False)].copy()
         if not df_ncc.empty:
-            # Tính số ngày tồn kho bảo hành
             df_ncc['days'] = (datetime.now().date() - pd.to_datetime(df_ncc['confirmed_date']).dt.date).dt.days
-            st.warning(f"⚠️ Có {len(df_ncc)} máy đang nằm tại NCC. Chú ý các máy tồn > 7 ngày.")
+            st.warning(f"⚠️ Có {len(df_ncc)} máy đang sửa ngoài. Chú ý các ca > 7 ngày.")
             st.dataframe(
                 df_ncc[['machine_display', 'days', 'issue_reason', 'receiver_name']], 
                 column_config={"days": st.column_config.NumberColumn("Số ngày tồn", format="%d ngày ⏳")},
                 use_container_width=True, hide_index=True
             )
         else:
-            st.info("Hiện tại không có máy nào đang gửi NCC.")
+            st.info("Không có máy nào tại NCC.")
 
     with tab_fixed:
-        # Lọc các máy ở trạng thái số 5 (Đã sửa xong)
+        # Lọc trạng thái '5. Đã sửa xong'
         df_ready = df_to_track[df_to_track['status'].str.contains("5.", na=False)].copy()
         if not df_ready.empty:
-            st.success(f"📦 Có {len(df_ready)} máy đã sửa xong, đang chờ đóng gói trả chi nhánh.")
+            st.success(f"📦 {len(df_ready)} máy đã sẵn sàng để điều phối trả vùng.")
             st.dataframe(
                 df_ready[['machine_display', 'branch', 'compensation', 'note']], 
                 column_config={"compensation": st.column_config.NumberColumn("Chi phí", format="%d đ")},
                 use_container_width=True, hide_index=True
             )
         else:
-            st.info("Không có máy nào đang chờ trả.")
+            st.info("Hiện không có máy chờ trả.")
 
     with tab_returned:
-        # Lọc các máy ở trạng thái số 6 (Đã trả chi nhánh)
-        df_ret = df_to_track[df_to_track['status'].str.contains("6.", na=False)].copy()
-        st.write("Dữ liệu 20 ca hoàn tất gần nhất:")
-        st.dataframe(df_ret.sort_values('updated_at', ascending=False).head(20), use_container_width=True, hide_index=True)
+        df_ret = df_to_track[df_to_track['status'].str.contains("6.", na=False)].head(15)
+        st.write("15 ca trả máy gần nhất:")
+        st.dataframe(df_ret[['machine_display', 'updated_at', 'receiver_name']], use_container_width=True, hide_index=True)
+
 def render_status_management(df):
     """
-    Giao diện Quản lý luồng máy Nhận - Trả chuyên nghiệp.
-    Tích hợp Dashboard tổng hợp, Bộ lọc vùng miền và Cập nhật tiến độ kỹ thuật.
+    Giao diện Quản lý vận hành tích hợp Enterprise Tracking.
     """
-    
-    # ==========================================
-    # 1. PHẦN TỔNG HỢP & LỌC THEO VÙNG (DASHBOARD)
-    # ==========================================
-    st.markdown("### 📊 Tổng quan vận hành")
-    
-    # Bộ lọc vùng miền cho toàn bộ Tab
+    # 1. BỘ LỌC VÙNG MIỀN (Master Filter cho Tab)
+    st.markdown("### 📊 Tổng quan & Đối soát")
     list_branches = ["Tất cả"] + sorted(df['branch'].unique().tolist())
-    selected_region = st.selectbox("📍 Lọc theo khu vực đối soát:", list_branches, index=0)
+    selected_region = st.selectbox("📍 Chọn vùng đối soát:", list_branches, index=0, key="master_reg_filter")
     
-    # Lọc dữ liệu theo vùng đã chọn
     df_filtered = df if selected_region == "Tất cả" else df[df['branch'] == selected_region]
 
-    # Tính toán số lượng theo trạng thái (Dựa trên STATUS_OPTIONS từ ảnh của bạn)
-    # STATUS_OPTIONS dự kiến: ["1. Chờ nhận", "2. Đã nhận kho tổng", "3. Đang sửa nội bộ", "4. Gửi nhà cung cấp", "5. Đã sửa xong", "6. Đã trả chi nhánh"]
+    # 2. KPI METRICS
     status_counts = df_filtered['status'].value_counts().reindex(STATUS_OPTIONS, fill_value=0).reset_index()
-    status_counts.columns = ['Trạng thái', 'Số lượng']
-
-    # Hiển thị Metrics tóm tắt
     m_cols = st.columns(len(STATUS_OPTIONS))
     for idx, row in status_counts.iterrows():
-        # Chỉ lấy phần text sau số thứ tự để hiển thị metric (ví dụ: "Chờ nhận")
-        label = row['Trạng thái'].split(". ")[1] if ". " in row['Trạng thái'] else row['Trạng thái']
-        m_cols[idx].metric(label, f"{row['Số lượng']} máy")
-
-    # Biểu đồ trực quan hóa cơ cấu máy theo trạng thái
-    fig_status = px.bar(
-        status_counts, 
-        x='Số lượng', 
-        y='Trạng thái', 
-        orientation='h',
-        title=f"Phân bổ thiết bị - {selected_region}",
-        color='Trạng thái',
-        color_discrete_sequence=px.colors.qualitative.Pastel
-    )
-    fig_status.update_layout(showlegend=False, height=300, margin=dict(t=30, b=0, l=0, r=0))
-    st.plotly_chart(fig_status, use_container_width=True)
+        label = row['status'].split(". ")[1] if ". " in row['status'] else row['status']
+        m_cols[idx].metric(label, f"{row['count']} máy")
 
     st.divider()
 
-    # ==========================================
-    # 2. PHẦN ĐIỀU PHỐI & CẬP NHẬT CHI TIẾT
-    # ==========================================
-    st.markdown("### 🚚 Điều phối & Đối soát thiết bị")
-    
-    # Kiểm tra tính toàn vẹn Schema
-    required_cols = ['status', 'machine_display', 'branch', 'id', 'issue_reason']
-    if not all(col in df.columns for col in required_cols):
-        st.error("❌ Cấu trúc Database không tương thích. Vui lòng kiểm tra lại Query.")
-        return
+    # 3. TÍCH HỢP ENTERPRISE TRACKING (Gọi hàm mới ở đây)
+    render_enterprise_tracking(df_filtered)
 
-    # Lọc các ca đang xử lý (SLA Active) trong vùng đã chọn
-    active_cases = df_filtered[df_filtered['status'] != "6. Đã trả chi nhánh"]
+    st.divider()
+
+    # 4. FORM CẬP NHẬT CHI TIẾT
+    st.markdown("### ⚙️ Cập nhật tiến độ kỹ thuật")
+    active_cases = df_filtered[~df_filtered['status'].str.contains("6.", na=False)]
     
     if active_cases.empty:
-        st.success(f"✅ Khu vực {selected_region} hiện không có thiết bị tồn đọng.")
-        return
-
-    # Giao diện chọn thiết bị
-    col_sel, col_info = st.columns([1, 1.5])
-    with col_sel:
-        selected_code = st.selectbox(
-            "🔍 Tìm mã máy / Quét mã:", 
-            active_cases['machine_display'].unique(),
-            key="status_mgmt_select"
-        )
+        st.success(f"✅ Vùng {selected_region} sạch lưới! Không có máy tồn.")
+    else:
+        col_sel, col_info = st.columns([1, 1.5])
+        with col_sel:
+            selected_code = st.selectbox("🔍 Mã máy xử lý:", active_cases['machine_display'].unique())
         
-    case_info = active_cases[active_cases['machine_display'] == selected_code].iloc[0]
-
-    with col_info:
-        c1, c2, c3 = st.columns(3)
-        origin = case_info.get('origin_branch') or case_info['branch']
-        c1.metric("Nguồn gốc", origin)
-        c2.metric("Trạng thái", case_info['status'])
-        c3.metric("Người giữ", case_info.get('receiver_name') or "---")
-
-    st.markdown("---")
-    
-    # Form cập nhật tiến độ & Tình trạng hư hỏng thực tế
-    with st.expander(f"⚙️ Cập nhật tiến độ & Kỹ thuật cho: {selected_code}", expanded=True):
-        col_left, col_right = st.columns([1, 1])
+        case_info = active_cases[active_cases['machine_display'] == selected_code].iloc[0]
         
-        with col_left:
-            st.markdown("##### 📍 Trạng thái vận hành")
-            try:
-                curr_idx = STATUS_OPTIONS.index(case_info['status'])
-            except:
-                curr_idx = 0
-            new_st = st.selectbox("Trạng thái mới:", STATUS_OPTIONS, index=curr_idx)
-            staff = st.text_input("Nhân viên thực hiện:", placeholder="Tên thợ / Điều phối...")
-            conf_date = st.date_input("Ngày xác nhận sửa", datetime.now())
+        with col_info:
+            c1, c2 = st.columns(2)
+            c1.info(f"Nguồn: {case_info.get('origin_branch', 'N/A')}")
+            c2.error(f"Hiện tại: {case_info['status']}")
 
-        with col_right:
-            st.markdown("##### 🛠️ Tình trạng hư hỏng thực tế")
-            actual_reason = st.text_input("Lý do hỏng thực tế:", value=case_info.get('issue_reason', ""))
-            current_comp = case_info.get('compensation') if pd.notnull(case_info.get('compensation')) else 0
-            actual_cost = st.number_input("Chi phí thực tế (VNĐ):", min_value=0, value=int(current_comp), step=10000)
+        with st.expander(f"📝 Form cập nhật: {selected_code}", expanded=True):
+            f_l, f_r = st.columns(2)
+            with f_l:
+                new_st = st.selectbox("Trạng thái mới:", STATUS_OPTIONS, index=STATUS_OPTIONS.index(case_info['status']))
+                staff = st.text_input("Kỹ thuật viên:", value=case_info.get('receiver_name', ""))
+            with f_r:
+                reason = st.text_input("Lý do thực tế:", value=case_info.get('issue_reason', ""))
+                cost = st.number_input("Chi phí (VNĐ):", value=int(case_info.get('compensation', 0)))
             
-        note_text = st.text_area("Ghi chú tiến độ:", placeholder="Nhập tình trạng chi tiết hoặc linh kiện đang chờ...")
-        
-        if st.button("💾 Xác nhận cập nhật hệ thống", type="primary", use_container_width=True):
-            if not staff:
-                st.warning("⚠️ Vui lòng nhập tên nhân viên để đảm bảo tính Audit Log!")
-            else:
-                with st.spinner("Đang đồng bộ dữ liệu..."):
-                    update_payload = {
-                        "status": new_st,
-                        "receiver_name": staff,
-                        "note": note_text,
-                        "issue_reason": actual_reason,
-                        "compensation": float(actual_cost),
-                        "confirmed_date": conf_date.isoformat(),
-                        "updated_at": datetime.now().isoformat()
+            note = st.text_area("Ghi chú tiến độ (Linh kiện, vận chuyển...)")
+            
+            if st.button("💾 Xác nhận cập nhật hệ thống", type="primary", use_container_width=True):
+                if not staff: st.warning("Vui lòng nhập tên người xử lý!")
+                else:
+                    payload = {
+                        "status": new_st, "receiver_name": staff, "issue_reason": reason,
+                        "compensation": float(cost), "note": note, "updated_at": datetime.now().isoformat()
                     }
-                    
-                    try:
-                        res = supabase.table("repair_cases").update(update_payload).eq("id", case_info['id']).execute()
-                        if res:
-                            st.toast(f"✅ Đã cập nhật máy {selected_code} thành công!")
-                            st.cache_data.clear()
-                            st.rerun()
-                    except Exception as e:
-                        st.error(f"❌ Lỗi Database: {str(e)}")
-
-    # ==========================================
-    # 3. PHẦN TRA CỨU LỊCH SỬ THIẾT BỊ
-    # ==========================================
-    st.divider()
-    st.subheader(f"🔍 Lịch sử thiết bị: {selected_code}")
-    
-    # Lấy lịch sử toàn bộ của máy này từ df gốc (không lọc theo vùng để thấy hành trình xuyên vùng)
-    df_machine = df[df['machine_display'] == selected_code].copy()
-    
-    m_col1, m_col2 = st.columns(2)
-    m_col1.info(f"📍 Chi nhánh hiện tại: **{df_machine['branch'].iloc[0]}**")
-    total_cost = df_machine['compensation'].sum() if 'compensation' in df_machine.columns else 0
-    m_col2.error(f"💸 Tổng chi phí tích lũy: **{total_cost:,.0f} đ**")
-
-    st.dataframe(
-        df_machine.sort_values('confirmed_date', ascending=False)[
-            ['confirmed_date', 'customer_name', 'issue_reason', 'compensation', 'note']
-        ], 
-        column_config={
-            "compensation": st.column_config.NumberColumn("Chi phí bồi thường", format="%d đ"),
-            "confirmed_date": "Ngày xác nhận",
-            "customer_name": "Tên khách hàng",
-            "issue_reason": "Lý do hư hỏng",
-            "note": "Ghi chú kỹ thuật"
-        },
-        use_container_width=True,
-        hide_index=True
-    )
+                    supabase.table("repair_cases").update(payload).eq("id", case_info['id']).execute()
+                    st.toast(f"✅ Đã cập nhật {selected_code}")
+                    st.cache_data.clear()
+                    st.rerun()
 
 def render_admin_panel(df_db):
     st.title("📥 Quản Trị & Điều Hành Hệ Thống")
